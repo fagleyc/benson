@@ -204,26 +204,23 @@ _UUID_RE = re.compile(
 )
 
 
-async def _upload_attachment(client: httpx.AsyncClient, file_path: str) -> str:
-    """Upload a local file to the Signal REST API and return its attachment ID.
+def _encode_attachment(file_path: str) -> str:
+    """Encode a local file as a signal-cli-rest-api data URI for inline
+    embedding in v2/send's `base64_attachments` array.
 
-    Raises FileNotFoundError if the file doesn't exist on disk, or
-    RuntimeError if the API returns an error status.
+    Format: data:<mime>;filename=<name>;base64,<base64-payload>
+
+    signal-cli-rest-api has NO POST upload endpoint — attachments are
+    embedded inline in the send body. /v1/attachments only supports
+    GET (for downloading received attachments).
     """
+    import base64 as _b64
     p = Path(file_path)
     if not p.is_file():
         raise FileNotFoundError(f"file not found: {file_path!r}")
     mime = mimetypes.guess_type(file_path)[0] or "application/octet-stream"
-    r = await client.post(
-        f"{SIGNAL_API}/v1/attachments",
-        files={"file": (p.name, p.read_bytes(), mime)},
-    )
-    if r.status_code >= 400:
-        raise RuntimeError(
-            f"attachment upload failed for {p.name!r}: HTTP {r.status_code} — {r.text[:200]}"
-        )
-    # signal-cli-rest-api returns the attachment ID as a plain string
-    return r.text.strip().strip('"')
+    encoded = _b64.b64encode(p.read_bytes()).decode("ascii")
+    return f"data:{mime};filename={p.name};base64,{encoded}"
 
 
 async def send_signal_message(
@@ -240,9 +237,9 @@ async def send_signal_message(
       - groups as `group.{base64(internal_id)}`
 
     file_paths is an optional list of local file paths to attach as
-    images or documents.  Each file is uploaded to the Signal REST API
-    before sending; if any upload fails the entire call is aborted and
-    a clear error is returned indicating which file failed and why.
+    images or documents. Each file is base64-encoded into a data URI
+    and embedded directly in the v2/send payload's base64_attachments
+    field — signal-cli-rest-api does NOT have a POST upload endpoint.
     """
     num = _benson_number()
     if not num:
@@ -255,33 +252,37 @@ async def send_signal_message(
         encoded = base64.b64encode(to.encode("utf-8")).decode("ascii")
         recipient = f"group.{encoded}"
 
-    attachment_ids: list[str] = []
+    base64_attachments: list[str] = []
     if file_paths:
-        async with httpx.AsyncClient(timeout=30) as upload_client:
-            for fp in file_paths:
-                try:
-                    att_id = await _upload_attachment(upload_client, fp)
-                    attachment_ids.append(att_id)
-                except FileNotFoundError as exc:
-                    return {"ok": False, "error": str(exc)}
-                except RuntimeError as exc:
-                    return {"ok": False, "error": str(exc)}
-                except Exception as exc:
-                    return {"ok": False, "error": f"unexpected error uploading {fp!r}: {exc}"}
+        for fp in file_paths:
+            try:
+                base64_attachments.append(_encode_attachment(fp))
+            except FileNotFoundError as exc:
+                return {"ok": False, "error": str(exc)}
+            except Exception as exc:
+                return {"ok": False, "error": f"failed to encode {fp!r}: {exc}"}
 
     payload: dict = {
         "number": num,
         "message": text,
         "recipients": [recipient],
     }
-    if attachment_ids:
-        payload["attachments"] = attachment_ids
+    if base64_attachments:
+        payload["base64_attachments"] = base64_attachments
 
     try:
-        async with httpx.AsyncClient(timeout=15) as client:
+        # Bigger timeout than text-only — base64 payloads are ~33% larger
+        # than the source bytes and can take a moment to relay.
+        timeout = 60 if base64_attachments else 15
+        async with httpx.AsyncClient(timeout=timeout) as client:
             r = await client.post(f"{SIGNAL_API}/v2/send", json=payload)
         if r.status_code >= 400:
-            logger.warning(f"signal /v2/send {r.status_code}: payload={payload} body={r.text[:500]}")
+            # Don't log the full base64 blobs — they can be megabytes.
+            payload_summary = {
+                **{k: v for k, v in payload.items() if k != "base64_attachments"},
+                "base64_attachments_count": len(base64_attachments),
+            }
+            logger.warning(f"signal /v2/send {r.status_code}: payload={payload_summary} body={r.text[:500]}")
         return {"ok": r.status_code < 400, "status": r.status_code, "body": r.text[:500]}
     except Exception as e:
         return {"ok": False, "error": str(e)}
