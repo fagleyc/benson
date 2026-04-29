@@ -2126,23 +2126,38 @@ async def _tool_write_local_file(path: str, content: str, append: bool = False) 
     "propose_change",
     "Open a self-modification proposal: spawn a coding session that "
     "edits Benson's own source in /opt/benson and commits to a fresh "
-    "git branch. Casey reviews the diff on the /admin/proposals page "
-    "and clicks merge to actually apply (which restarts the service). "
-    "Use this when you've identified a real bug, missing capability, or "
-    "rough edge in your own behavior — usually after read_my_conversations "
-    "or read_my_logs surfaces a pattern. Be concrete: rationale should "
-    "name the user-visible problem; instructions should name the "
-    "files/functions/behaviors to change.",
+    "git branch. Casey reviews the rationale + diff on /admin/proposals "
+    "and clicks merge to apply (auto-restart). ONLY call this AFTER "
+    "Casey has confirmed your diagnosis in chat — see the DIAGNOSIS "
+    "FLOW in your system prompt. Don't call this on speculation, on a "
+    "follow-up about an existing proposal, or for stylistic tweaks.",
     {
         "type": "object",
         "properties": {
             "rationale": {
                 "type": "string",
-                "description": "One paragraph: what problem are you solving and why does it matter?",
+                "description": (
+                    "Three labeled sections, written so the dashboard card is "
+                    "self-explanatory:\n"
+                    "  Intuition: what you think happened and why (cite "
+                    "files/lines/log timestamps if you investigated).\n"
+                    "  What I'd fix: the structural gap that allowed it — "
+                    "not the incident itself.\n"
+                    "  How: which file(s)/function(s)/tool(s)/memory shape "
+                    "would change, and what new behavior emerges.\n"
+                    "Ideally 4-10 lines total. The card title on "
+                    "/admin/proposals is the rationale; if it's a slug, "
+                    "Casey can't review without diving into the diff."
+                ),
             },
             "instructions": {
                 "type": "string",
-                "description": "Concrete edit plan: which files/functions, what to change, what to leave alone.",
+                "description": (
+                    "Step-by-step edit plan for the SDK session: which "
+                    "files, which functions, what to add/remove/rename, "
+                    "what to leave alone. Be specific enough that someone "
+                    "reading just this could implement it."
+                ),
             },
         },
         "required": ["rationale", "instructions"],
