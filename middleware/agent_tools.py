@@ -983,24 +983,69 @@ async def update_memory(
 
 
 # ─── Signal ──────────────────────────────────────────────────────────────
+_SIGNAL_FILE_PREFIXES = ("/home/casey/Benson/", "/tmp/benson-")
+
+
 @_register(
     "send_signal",
     "Send a Signal message via Benson's Signal bridge. `to` is a phone "
     "number in E.164 ('+15551234567') for a direct message, or a Signal "
-    "group base64 id for a group. Use only when the user asks Benson to "
-    "message someone explicitly. Always confirm the destination first.",
+    "group base64 id for a group. Optionally include images or documents "
+    "via `file_paths` (each must be under /home/casey/Benson/* or "
+    "/tmp/benson-*). Use only when the user asks Benson to message "
+    "someone explicitly. Always confirm the destination first.",
     {
         "type": "object",
         "properties": {
             "to": {"type": "string"},
             "message": {"type": "string"},
+            "file_paths": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": (
+                    "Optional list of local file paths to attach as images or "
+                    "documents.  Each path must start with '/home/casey/Benson/' "
+                    "or '/tmp/benson-'."
+                ),
+            },
         },
         "required": ["to", "message"],
     },
 )
-async def send_signal(to: str, message: str) -> dict:
+async def send_signal(
+    to: str,
+    message: str,
+    file_paths: list[str] | None = None,
+) -> dict:
+    from pathlib import Path as _Path
     from signal_handler import send_signal_message
-    return await send_signal_message(to, message)
+
+    if file_paths:
+        allowed_desc = " or ".join(f"'{p}'" for p in _SIGNAL_FILE_PREFIXES)
+        for fp in file_paths:
+            # Prefix check on the raw path
+            if not any(fp.startswith(pfx) for pfx in _SIGNAL_FILE_PREFIXES):
+                return {
+                    "ok": False,
+                    "error": (
+                        f"file_path {fp!r} is not allowed — must be under {allowed_desc}"
+                    ),
+                }
+            # Resolve and re-check to block path-traversal tricks
+            try:
+                resolved = _Path(fp).resolve()
+            except Exception as exc:
+                return {"ok": False, "error": f"cannot resolve path {fp!r}: {exc}"}
+            if not any(str(resolved).startswith(pfx) for pfx in _SIGNAL_FILE_PREFIXES):
+                return {
+                    "ok": False,
+                    "error": (
+                        f"resolved path {str(resolved)!r} escapes allowed prefixes "
+                        f"({allowed_desc})"
+                    ),
+                }
+
+    return await send_signal_message(to, message, file_paths=file_paths or None)
 
 
 # ─── HA state inspection ─────────────────────────────────────────────────

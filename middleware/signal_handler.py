@@ -14,9 +14,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import mimetypes
 import os
 import re
 from contextlib import suppress
+from pathlib import Path
 
 import httpx
 from fastapi import APIRouter, HTTPException, Request
@@ -202,7 +204,33 @@ _UUID_RE = re.compile(
 )
 
 
-async def send_signal_message(to: str, text: str) -> dict:
+async def _upload_attachment(client: httpx.AsyncClient, file_path: str) -> str:
+    """Upload a local file to the Signal REST API and return its attachment ID.
+
+    Raises FileNotFoundError if the file doesn't exist on disk, or
+    RuntimeError if the API returns an error status.
+    """
+    p = Path(file_path)
+    if not p.is_file():
+        raise FileNotFoundError(f"file not found: {file_path!r}")
+    mime = mimetypes.guess_type(file_path)[0] or "application/octet-stream"
+    r = await client.post(
+        f"{SIGNAL_API}/v1/attachments",
+        files={"file": (p.name, p.read_bytes(), mime)},
+    )
+    if r.status_code >= 400:
+        raise RuntimeError(
+            f"attachment upload failed for {p.name!r}: HTTP {r.status_code} — {r.text[:200]}"
+        )
+    # signal-cli-rest-api returns the attachment ID as a plain string
+    return r.text.strip().strip('"')
+
+
+async def send_signal_message(
+    to: str,
+    text: str,
+    file_paths: list[str] | None = None,
+) -> dict:
     """Send a Signal message. `to` is E.164 (+1…), an ACI UUID, or a
     group internal_id (signal-cli's raw base64).
 
@@ -210,6 +238,11 @@ async def send_signal_message(to: str, text: str) -> dict:
       - phone numbers as-is (E.164)
       - UUIDs as-is
       - groups as `group.{base64(internal_id)}`
+
+    file_paths is an optional list of local file paths to attach as
+    images or documents.  Each file is uploaded to the Signal REST API
+    before sending; if any upload fails the entire call is aborted and
+    a clear error is returned indicating which file failed and why.
     """
     num = _benson_number()
     if not num:
@@ -221,11 +254,29 @@ async def send_signal_message(to: str, text: str) -> dict:
         import base64
         encoded = base64.b64encode(to.encode("utf-8")).decode("ascii")
         recipient = f"group.{encoded}"
-    payload = {
+
+    attachment_ids: list[str] = []
+    if file_paths:
+        async with httpx.AsyncClient(timeout=30) as upload_client:
+            for fp in file_paths:
+                try:
+                    att_id = await _upload_attachment(upload_client, fp)
+                    attachment_ids.append(att_id)
+                except FileNotFoundError as exc:
+                    return {"ok": False, "error": str(exc)}
+                except RuntimeError as exc:
+                    return {"ok": False, "error": str(exc)}
+                except Exception as exc:
+                    return {"ok": False, "error": f"unexpected error uploading {fp!r}: {exc}"}
+
+    payload: dict = {
         "number": num,
         "message": text,
         "recipients": [recipient],
     }
+    if attachment_ids:
+        payload["attachments"] = attachment_ids
+
     try:
         async with httpx.AsyncClient(timeout=15) as client:
             r = await client.post(f"{SIGNAL_API}/v2/send", json=payload)
