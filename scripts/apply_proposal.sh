@@ -56,6 +56,15 @@ if ! find /opt/benson/middleware -maxdepth 2 -name '*.py' -not -path '*/venv/*' 
     exit 6
 fi
 
+# Clean the proposal-meta file out of main — it was branch-only context
+# (rationale + instructions for Casey's review). No reason to ship it.
+if [ -f /opt/benson/.benson-proposal-meta.json ]; then
+    git rm -q .benson-proposal-meta.json >/dev/null 2>&1 || true
+    GIT_AUTHOR_NAME=Benson GIT_AUTHOR_EMAIL=benson@fagley.home \
+    GIT_COMMITTER_NAME=Benson GIT_COMMITTER_EMAIL=benson@fagley.home \
+    git commit -q -m "[proposal-meta] cleanup after merge of $BRANCH" >/dev/null 2>&1 || true
+fi
+
 # Delete the proposal branch — it's been merged.
 git branch -d "$BRANCH" >/dev/null 2>&1 || true
 

@@ -358,7 +358,12 @@ async def propose_change(rationale: str, instructions: str) -> dict:
         return await _propose_change_locked(rationale, instructions)
 
 
+PROPOSAL_META_FILE = ".benson-proposal-meta.json"
+PROPOSAL_META_TAG = "[proposal-meta]"
+
+
 async def _propose_change_locked(rationale: str, instructions: str) -> dict:
+    import json as _json
     branch = _proposal_branch_name(rationale)
     logger.info(f"propose_change: opening branch {branch}")
 
@@ -378,22 +383,63 @@ async def _propose_change_locked(rationale: str, instructions: str) -> dict:
     _append_log(f"RATIONALE: {rationale}")
     _append_log(f"INSTRUCTIONS: {instructions}")
 
-    # Branch from main. Working tree must be clean.
+    # Branch from main. Working tree must be clean — if it isn't, give a
+    # useful diagnostic instead of just printing the porcelain output.
     try:
         status = await asyncio.to_thread(_git, ["status", "--porcelain"])
-        if status.strip():
-            _append_log(f"REFUSED: dirty tree: {status[:300]}")
+        head_branch = (await asyncio.to_thread(_git, ["branch", "--show-current"])).strip()
+        if status.strip() or head_branch != "main":
+            _append_log(f"REFUSED: dirty tree (head={head_branch}): {status[:300]}")
             return {
                 "ok": False,
-                "error": f"working tree is dirty, refusing: {status[:200]}",
+                "error": (
+                    f"workspace is not clean — head is '{head_branch}', "
+                    f"changes:\n{status[:400]}\n\n"
+                    f"A previous proposal likely crashed mid-edit. Recovery: "
+                    f"`cd /opt/benson && git checkout main && git checkout -- .` "
+                    f"OR commit/preserve the changes on the existing branch."
+                ),
                 "log_path": str(log_path),
             }
-        await asyncio.to_thread(_git, ["checkout", "main"])
         await asyncio.to_thread(_git, ["checkout", "-b", branch])
     except subprocess.CalledProcessError as e:
         out = e.output.decode() if isinstance(e.output, bytes) else str(e.output)
         _append_log(f"GIT SETUP FAILED: {out}")
         return {"ok": False, "error": f"git setup failed: {out[:300]}", "log_path": str(log_path)}
+
+    # Write proposal metadata to the branch root and commit it BEFORE the
+    # SDK runs. This guarantees rationale + instructions are visible on
+    # /admin/proposals even if the SDK crashes mid-edit (the previous
+    # behavior left 0-commit branches with no readable context).
+    meta_path = REPO_DIR / PROPOSAL_META_FILE
+    meta = {
+        "rationale": rationale,
+        "instructions": instructions,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "branch": branch,
+    }
+    try:
+        meta_path.write_text(_json.dumps(meta, indent=2))
+        await asyncio.to_thread(_git, ["add", PROPOSAL_META_FILE])
+        rationale_subject = rationale.replace("\n", " ").strip()[:60]
+        meta_msg = (
+            f"{PROPOSAL_META_TAG} {rationale_subject}\n\n"
+            f"RATIONALE: {rationale}\n\n"
+            f"INSTRUCTIONS: {instructions}"
+        )
+        await asyncio.to_thread(_git, ["commit", "-m", meta_msg])
+        _append_log("META: committed proposal metadata")
+    except subprocess.CalledProcessError as e:
+        out = e.output.decode() if isinstance(e.output, bytes) else str(e.output)
+        _append_log(f"META COMMIT FAILED: {out}")
+        # Best-effort recovery — switch back to main, delete branch, return.
+        try:
+            await asyncio.to_thread(_git, ["checkout", "--", "."])
+            await asyncio.to_thread(_git, ["checkout", "main"])
+            await asyncio.to_thread(_git, ["branch", "-D", branch])
+        except Exception:
+            pass
+        return {"ok": False, "error": f"meta commit failed: {out[:300]}", "log_path": str(log_path)}
 
     # Spawn Claude Code SDK session.
     from claude_agent_sdk import (
@@ -402,12 +448,19 @@ async def _propose_change_locked(rationale: str, instructions: str) -> dict:
         TextBlock,
         query,
     )
+
+    def _stderr_to_log(line: str) -> None:
+        # The SDK pipes the bundled CLI's stderr through this callback only
+        # when set — without it, "Check stderr output for details" is opaque.
+        _append_log(f"[stderr] {line.rstrip()}")
+
     options = ClaudeAgentOptions(
         cwd=str(REPO_DIR),
-        model="sonnet",
+        model="opus",  # self-mod planning needs Opus per Casey 2026-04-29
         max_turns=30,
         permission_mode="bypassPermissions",
         allowed_tools=["Read", "Edit", "Write", "Grep", "Glob", "Bash"],
+        stderr=_stderr_to_log,
     )
     full_prompt = (
         "You are improving Benson, a household AI assistant. You are running "
@@ -462,14 +515,26 @@ async def _propose_change_locked(rationale: str, instructions: str) -> dict:
     m = re.search(r"SUMMARY:\s*(.+?)(?:\n\n|$)", transcript_blob, re.DOTALL)
     summary = m.group(1).strip() if m else (transcript_blob[:600] or "(no summary)")
 
-    # Did the session actually commit anything on this branch?
+    # Crash recovery: if the SDK crashed mid-edit, the working tree may
+    # have uncommitted changes. Reset before switching back to main —
+    # otherwise the next propose_change refuses with "dirty tree".
+    try:
+        await asyncio.to_thread(_git, ["checkout", "--", "."])
+    except Exception as e:
+        logger.warning(f"git checkout -- . cleanup failed: {e}")
+
+    # Count SDK commits on this branch — exclude the proposal-meta commit
+    # we made before the SDK ran. If only meta exists, the SDK contributed
+    # nothing and we should drop the branch.
+    sdk_commits: list[str] = []
     try:
         log_out = await asyncio.to_thread(
             _git, ["log", "main..HEAD", "--oneline"], check=False
         )
-        commits = [ln for ln in log_out.strip().splitlines() if ln.strip()]
+        for ln in log_out.strip().splitlines():
+            if ln.strip() and PROPOSAL_META_TAG not in ln:
+                sdk_commits.append(ln)
     except Exception as e:
-        commits = []
         logger.warning(f"git log failed on {branch}: {e}")
 
     try:
@@ -477,28 +542,29 @@ async def _propose_change_locked(rationale: str, instructions: str) -> dict:
     except Exception as e:
         logger.warning(f"git checkout main after proposal failed: {e}")
 
-    if not commits:
+    if not sdk_commits:
         try:
             await asyncio.to_thread(_git, ["branch", "-D", branch])
         except Exception:
             pass
-        _append_log("OUTCOME: no commits — branch deleted")
+        _append_log("OUTCOME: SDK contributed no commits — branch deleted")
         return {
             "ok": False,
             "error": (
-                f"session ended without committing any changes"
+                f"SDK session ended without committing any code changes"
                 + (f" (sdk_error: {sdk_error})" if sdk_error else "")
+                + f". Full log: {log_path}"
             ),
             "branch": None,
             "summary": summary,
             "log_path": str(log_path),
         }
 
-    _append_log(f"OUTCOME: {len(commits)} commit(s) on {branch}")
+    _append_log(f"OUTCOME: {len(sdk_commits)} SDK commit(s) on {branch}")
     return {
         "ok": True,
         "branch": branch,
-        "commits": commits,
+        "commits": sdk_commits,
         "summary": summary,
         "review_url": "/admin/proposals",
         "log_path": str(log_path),
@@ -545,9 +611,11 @@ def reject_proposal(branch: str) -> dict:
 
 
 def list_open_proposals() -> list[dict]:
-    """List proposal/* branches not yet merged to main."""
+    """List proposal/* branches not yet merged to main, with rationale +
+    instructions sourced from each branch's .benson-proposal-meta.json
+    when present (older branches without the file degrade gracefully)."""
+    import json as _json
     try:
-        # for-each-ref gives us branch + last commit info in one shot
         fmt = "%(refname:short)|%(committerdate:iso8601)|%(contents:subject)"
         out = _git([
             "for-each-ref",
@@ -573,12 +641,33 @@ def list_open_proposals() -> list[dict]:
         except subprocess.CalledProcessError:
             stat_line = "(diff failed)"
             commit_count = 0
+
+        # Pull rationale + instructions from the proposal-meta file on the
+        # branch. Falls back to empty strings for older branches that
+        # predate the metadata mechanism.
+        rationale = ""
+        instructions = ""
+        try:
+            meta_raw = _git(["show", f"{branch}:{PROPOSAL_META_FILE}"])
+            meta = _json.loads(meta_raw)
+            rationale = (meta.get("rationale") or "").strip()
+            instructions = (meta.get("instructions") or "").strip()
+        except Exception:
+            pass
+
+        # Count "real" SDK commits — exclude the meta commit so 0-commit
+        # branches that only contain metadata are clearly visible as such.
+        sdk_commit_count = max(0, commit_count - (1 if rationale else 0))
+
         proposals.append({
             "branch": branch,
             "date": date_s,
             "subject": subject,
             "diffstat": stat_line,
             "commit_count": commit_count,
+            "sdk_commit_count": sdk_commit_count,
+            "rationale": rationale,
+            "instructions": instructions,
         })
     return proposals
 

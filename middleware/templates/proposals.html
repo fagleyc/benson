@@ -18,15 +18,36 @@
 
 {% for p in proposals %}
 <div class="card bg-dark border-secondary p-3 mb-3" id="card-{{ loop.index }}">
-  <div class="d-flex justify-content-between align-items-baseline">
-    <div>
-      <h5 class="mb-1">{{ p.subject }}</h5>
+  <div class="d-flex justify-content-between align-items-start gap-3">
+    <div class="flex-grow-1">
+      {% if p.rationale %}
+        <h5 class="mb-2 text-warning" style="font-weight:500">{{ p.rationale }}</h5>
+      {% else %}
+        <h5 class="mb-2">{{ p.subject }}</h5>
+        <div class="small text-secondary mb-2 fst-italic">
+          (legacy proposal — no rationale captured)
+        </div>
+      {% endif %}
       <div class="small text-secondary">
-        <code>{{ p.branch }}</code> · {{ p.date }} · {{ p.commit_count }} commit{% if p.commit_count != 1 %}s{% endif %}
+        <code>{{ p.branch }}</code> · {{ p.date }} ·
+        {% if p.sdk_commit_count is defined %}
+          {{ p.sdk_commit_count }} code commit{% if p.sdk_commit_count != 1 %}s{% endif %}
+          {% if p.sdk_commit_count == 0 %}
+            <span class="badge bg-warning text-dark ms-1">SDK didn't commit — likely crashed</span>
+          {% endif %}
+        {% else %}
+          {{ p.commit_count }} commit{% if p.commit_count != 1 %}s{% endif %}
+        {% endif %}
       </div>
       <div class="small text-secondary mt-1">{{ p.diffstat }}</div>
+      {% if p.instructions %}
+        <details class="mt-2">
+          <summary class="small text-secondary" style="cursor:pointer">Instructions Benson received</summary>
+          <pre class="mt-1 p-2 small" style="background:#0f1419;border-radius:6px;white-space:pre-wrap;font-size:.8rem;line-height:1.4">{{ p.instructions }}</pre>
+        </details>
+      {% endif %}
     </div>
-    <div class="btn-group">
+    <div class="btn-group flex-shrink-0">
       <button class="btn btn-sm btn-outline-secondary"
               onclick="toggleDiff('{{ p.branch }}', {{ loop.index }})">
         View diff
