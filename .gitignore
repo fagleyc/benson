@@ -11,6 +11,13 @@ middleware/venv/
 **/venv/
 **/.venv/
 
+# Caches (model weights, HF hub, pip, CUDA compute cache)
+**/.cache/
+middleware/.cache/
+**/.nv/
+middleware/.nv/
+.pytest_cache/
+
 # Transient session/runtime state
 middleware/sessions/
 middleware/audio/
