@@ -91,7 +91,7 @@ _SONNET_PATTERNS = re.compile(
     # Diagnostic / why-did / what-went-wrong — these are where Haiku
     # produced confidently-wrong answers in production. Routing them to
     # Sonnet so the investigation actually grounds in source/logs.
-    r"why\s+(?:did|does|is|isn'?t|can'?t|won'?t)|"
+    r"why\s+(?:did|does|do|is|are|was|were|wasn'?t|weren'?t|isn'?t|aren'?t|can'?t|couldn'?t|won'?t|wouldn'?t|shouldn'?t)|"
     r"what\s+(?:went\s+wrong|happened|broke|failed|caused)|"
     r"diagnose|debug|troubleshoot|investigate|"
     r"how\s+come|how\s+do(?:es)?\s+(?:this|that|it)\s+work|"
