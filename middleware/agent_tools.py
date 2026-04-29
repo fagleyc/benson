@@ -2009,6 +2009,52 @@ async def _tool_list_my_tools() -> dict:
 
 
 @_register(
+    "read_my_source",
+    "Read a file from your own source tree at /opt/benson. Use this when "
+    "the user asks where something lives or whether a capability already "
+    "exists — DO NOT claim something is missing without grepping/reading "
+    "the source first. `path` may be relative ('middleware/data_api.py') "
+    "or absolute under /opt/benson. Files larger than 500KB are refused; "
+    "use grep_my_source for those.",
+    {
+        "type": "object",
+        "properties": {
+            "path": {"type": "string", "description": "Path relative to /opt/benson or absolute."},
+            "max_lines": {"type": "integer", "default": 400, "minimum": 1, "maximum": 2000},
+        },
+        "required": ["path"],
+    },
+)
+async def _tool_read_my_source(path: str, max_lines: int = 400) -> dict:
+    from self_modify import read_my_source
+    return await read_my_source(path=path, max_lines=max_lines)
+
+
+@_register(
+    "grep_my_source",
+    "Search your own source tree at /opt/benson with a regex. Use this "
+    "FIRST when the user asks where something is implemented, whether a "
+    "capability exists, or how some endpoint works. Default glob is "
+    "'**/*.py' — pass 'middleware/templates/*.html' etc to scope. Skips "
+    "venv, caches, model bundles, and user data automatically.",
+    {
+        "type": "object",
+        "properties": {
+            "pattern": {"type": "string", "description": "Python regex."},
+            "path_glob": {"type": "string", "default": "**/*.py", "description": "Glob relative to /opt/benson."},
+            "max_results": {"type": "integer", "default": 60, "minimum": 1, "maximum": 300},
+        },
+        "required": ["pattern"],
+    },
+)
+async def _tool_grep_my_source(
+    pattern: str, path_glob: str = "**/*.py", max_results: int = 60
+) -> dict:
+    from self_modify import grep_my_source
+    return await grep_my_source(pattern=pattern, path_glob=path_glob, max_results=max_results)
+
+
+@_register(
     "propose_change",
     "Open a self-modification proposal: spawn a coding session that "
     "edits Benson's own source in /opt/benson and commits to a fresh "

@@ -107,6 +107,105 @@ async def read_my_logs(lines: int = 100, since: str | None = None) -> dict:
         return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
 
+async def read_my_source(path: str, max_lines: int = 400) -> dict:
+    """Read a file from /opt/benson (read-only). Use this when the user
+    asks where something lives or whether some capability already exists.
+    `path` may be relative to /opt/benson or absolute under /opt/benson.
+    """
+    p = Path(path)
+    if not p.is_absolute():
+        p = REPO_DIR / path
+    try:
+        resolved = p.resolve()
+    except Exception as e:
+        return {"ok": False, "error": f"could not resolve path: {e}"}
+    # Refuse paths outside the repo or inside .git config.
+    repo_resolved = REPO_DIR.resolve()
+    try:
+        resolved.relative_to(repo_resolved)
+    except ValueError:
+        return {"ok": False, "error": f"refusing to read outside /opt/benson: {resolved}"}
+    if any(part in {".git"} for part in resolved.parts):
+        return {"ok": False, "error": "refusing to read inside .git/"}
+    if not resolved.exists():
+        return {"ok": False, "error": f"not found: {resolved}"}
+    if not resolved.is_file():
+        return {"ok": False, "error": f"not a file: {resolved}"}
+    if resolved.stat().st_size > 500_000:
+        return {"ok": False, "error": f"file too large ({resolved.stat().st_size} bytes); use grep_my_source instead"}
+    try:
+        text = resolved.read_text(errors="replace")
+    except Exception as e:
+        return {"ok": False, "error": f"read failed: {e}"}
+    lines = text.splitlines()
+    truncated = len(lines) > max_lines
+    if truncated:
+        lines = lines[:max_lines]
+    return {
+        "ok": True,
+        "path": str(resolved),
+        "lines": lines,
+        "line_count": len(lines),
+        "truncated": truncated,
+    }
+
+
+async def grep_my_source(pattern: str, path_glob: str = "**/*.py", max_results: int = 60) -> dict:
+    """Search /opt/benson for a regex pattern. Use this to find where a
+    capability is defined or whether something already exists. `path_glob`
+    defaults to '**/*.py' but can be 'middleware/templates/*.html', etc.
+    """
+    import re as _re
+    try:
+        regex = _re.compile(pattern)
+    except _re.error as e:
+        return {"ok": False, "error": f"bad regex: {e}"}
+
+    # Match files under REPO_DIR using the glob, skipping ignored noise.
+    skip_parts = {".git", "venv", ".venv", "__pycache__", ".cache", ".nv",
+                  "node_modules", "memory", "recipes", "context", "logs",
+                  "ha", "music_assistant", "signal", "whatsapp", "kokoro",
+                  "openwakeword", "whisper", "backup", "backups"}
+    results: list[dict] = []
+    truncated = False
+    try:
+        candidates = list(REPO_DIR.glob(path_glob))
+    except Exception as e:
+        return {"ok": False, "error": f"bad glob: {e}"}
+
+    for fp in candidates:
+        if any(part in skip_parts for part in fp.parts):
+            continue
+        if not fp.is_file():
+            continue
+        try:
+            if fp.stat().st_size > 1_000_000:
+                continue
+            for i, line in enumerate(fp.read_text(errors="replace").splitlines(), 1):
+                if regex.search(line):
+                    results.append({
+                        "path": str(fp.relative_to(REPO_DIR)),
+                        "line": i,
+                        "text": line[:240],
+                    })
+                    if len(results) >= max_results:
+                        truncated = True
+                        break
+        except Exception:
+            continue
+        if truncated:
+            break
+
+    return {
+        "ok": True,
+        "pattern": pattern,
+        "path_glob": path_glob,
+        "match_count": len(results),
+        "results": results,
+        "truncated": truncated,
+    }
+
+
 async def list_my_tools() -> dict:
     """Return a summary of every tool currently registered in this
     Benson instance — names + one-line descriptions. Useful when
