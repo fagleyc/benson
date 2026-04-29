@@ -1,0 +1,64 @@
+{% extends "layout.html" %}
+{% block title %}Status — Fagley House Hub{% endblock %}
+{% block content %}
+<h2 class="mb-3">System Status</h2>
+
+<div class="row g-3">
+  <div class="col-md-6">
+    <div class="card bg-dark border-secondary">
+      <div class="card-body">
+        <h5>Database</h5>
+        <ul class="list-unstyled mb-0">
+          <li>Recipes: <strong>{{ status.db.recipes }}</strong></li>
+          <li>Open chores: <strong>{{ status.db.open_chores }}</strong></li>
+          <li>Memories: <strong>{{ status.db.memories }}</strong></li>
+        </ul>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-6">
+    <div class="card bg-dark border-secondary">
+      <div class="card-body">
+        <h5>Secrets</h5>
+        <ul class="list-unstyled mb-0">
+          {% for label, key in [
+            ("Anthropic API key", "anthropic"),
+            ("HA long-lived token", "ha_token"),
+            ("Bond bridge token", "bond_token"),
+            ("Telegram bot token", "telegram_token"),
+            ("Instacart API key", "instacart"),
+          ] %}
+            <li>
+              {% if status.secrets[key] %}
+                <span class="text-success">●</span>
+              {% else %}
+                <span class="text-warning">○</span>
+              {% endif %}
+              {{ label }}
+            </li>
+          {% endfor %}
+        </ul>
+        <small class="text-secondary">
+          Edit <code>/etc/benson/env</code> and
+          <code>sudo systemctl restart benson</code> after.
+        </small>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="row g-3 mt-2">
+  <div class="col-12">
+    <div class="card bg-dark border-secondary">
+      <div class="card-body">
+        <h5>Build state</h5>
+        <p class="mb-1">See <code>/opt/benson/logs/build_log.md</code> for the per-phase record.</p>
+        <p class="mb-1">See <code>/opt/benson/HANDOFF_TO_CASEY.md</code> for the post-AFK punch list.</p>
+        <p class="mb-0 text-secondary small">
+          Phase 1-5 live · Phase 6 (satellites) and Phase 7 (Telegram) code-complete, awaiting hardware/tokens.
+        </p>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

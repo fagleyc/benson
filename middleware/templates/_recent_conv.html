@@ -1,0 +1,14 @@
+{% if conversations %}
+<ul class="list-unstyled small mb-0">
+  {% for c in conversations[:5] %}
+    <li class="mb-2">
+      <span class="badge bg-secondary">{{ c.tier }}</span>
+      <span class="text-secondary">{{ c.created_at.strftime('%H:%M') }}</span>
+      <div><strong>{{ c.speaker or '?' }}:</strong> {{ c.user_text|truncate(80) }}</div>
+      <div class="text-secondary">{{ c.benson_response|truncate(110) }}</div>
+    </li>
+  {% endfor %}
+</ul>
+{% else %}
+<span class="text-secondary small">No conversations yet.</span>
+{% endif %}

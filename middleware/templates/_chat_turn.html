@@ -1,0 +1,8 @@
+<div class="mb-2">
+  <div class="chat-bubble-user mb-1">{{ user_text }}</div>
+  <div class="chat-bubble-benson">{{ response }}</div>
+  <div class="chat-meta text-end">
+    {{ tier }}
+    {% if spoken_on %}· spoken on {{ spoken_on }}{% endif %}
+  </div>
+</div>

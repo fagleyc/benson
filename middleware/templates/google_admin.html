@@ -1,0 +1,172 @@
+{% extends "layout.html" %}
+{% block title %}Google — Fagley House Hub{% endblock %}
+{% block content %}
+<a href="/advanced" class="text-secondary">← Advanced</a>
+<h2 class="mt-3 mb-3">Google Accounts (Calendar + Gmail)</h2>
+
+<div class="card bg-dark border-secondary p-3 mb-3">
+  <h5>Linked Users</h5>
+  <table class="table table-dark table-sm align-middle mb-0">
+    <thead><tr><th>User</th><th>Email</th><th>Default Calendar</th><th>Events</th><th>Last Sync</th><th></th></tr></thead>
+    <tbody id="linkedRows"><tr><td colspan="6" class="text-secondary">loading…</td></tr></tbody>
+  </table>
+  <div id="defaultPicker" class="mt-3" style="display:none">
+    <h6 class="text-uppercase small text-secondary mb-2">Choose default calendar for <span id="defaultUser"></span></h6>
+    <p class="small text-secondary mb-2">When Benson creates an event for this user without a specific calendar hint, it lands here.</p>
+    <div id="calendarsList" class="d-flex flex-wrap gap-2"></div>
+    <button class="btn btn-sm btn-outline-secondary mt-2" onclick="closeDefaultPicker()">Close</button>
+  </div>
+</div>
+
+<div class="card bg-dark border-secondary p-3 mb-3">
+  <h5>1. Generate Auth Link</h5>
+  <p class="text-secondary small mb-2">
+    Pick which household member's Google account is being connected, then generate an auth URL. Open it on any device, sign in as that user, and grant access. The browser will try to redirect to <code>http://localhost</code> and fail — that's expected. Copy the entire URL from the address bar (it contains <code>?code=…</code>) and paste it in step 2.
+  </p>
+  <div class="d-flex gap-2 mb-2 align-items-center flex-wrap">
+    <select id="userField" class="form-select bg-dark text-light border-secondary" style="max-width:200px">
+      <option value="Lindsey">Lindsey</option>
+      <option value="Casey">Casey</option>
+      <option value="Cole">Cole</option>
+      <option value="Zander">Zander</option>
+      <option value="Sherry">Sherry</option>
+    </select>
+    <button class="btn btn-warning" onclick="genUrl()">Generate Auth URL</button>
+  </div>
+  <div id="authUrlBox" class="small"></div>
+</div>
+
+<div class="card bg-dark border-secondary p-3 mb-3">
+  <h5>2. Paste Callback URL</h5>
+  <div class="d-flex gap-2 mb-2 align-items-center flex-wrap">
+    <select id="userField2" class="form-select bg-dark text-light border-secondary" style="max-width:200px">
+      <option value="Lindsey">Lindsey</option>
+      <option value="Casey">Casey</option>
+      <option value="Cole">Cole</option>
+      <option value="Zander">Zander</option>
+      <option value="Sherry">Sherry</option>
+    </select>
+  </div>
+  <textarea id="callbackField" class="form-control bg-dark text-light border-secondary mb-2" rows="3" placeholder="http://localhost/?code=4/0AY...&scope=...&state=Lindsey"></textarea>
+  <button class="btn btn-warning" onclick="finishOauth()">Exchange Code → Save Tokens</button>
+  <div id="finishResult" class="mt-2 small"></div>
+</div>
+
+<div class="card bg-dark border-secondary p-3">
+  <h5>Manual Sync</h5>
+  <p class="text-secondary small mb-2">Calendar auto-syncs every 15 min. Hit a user to force-sync now.</p>
+  <div id="syncRow" class="d-flex gap-2 flex-wrap"></div>
+  <div id="syncResult" class="mt-2 small"></div>
+</div>
+
+<script>
+async function loadStatus() {
+  const r = await fetch('/google/status');
+  const j = await r.json();
+  const tbody = document.getElementById('linkedRows');
+  const sync = document.getElementById('syncRow');
+  if (!j.client_secrets_present) {
+    tbody.innerHTML = '<tr><td colspan="5" class="text-warning">⚠ /etc/benson/google_client_secret.json not found</td></tr>';
+    return;
+  }
+  if (!j.users || j.users.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="5" class="text-secondary">No accounts linked yet. Use the form below to connect.</td></tr>';
+    sync.innerHTML = '';
+    return;
+  }
+  tbody.innerHTML = j.users.map(u => {
+    const defLabel = u.default_calendar_name || (u.default_calendar_id ? u.default_calendar_id.slice(0,18)+'…' : '— primary —');
+    return `
+    <tr>
+      <td>${u.user_name}</td>
+      <td><code>${u.email || '?'}</code></td>
+      <td><span class="text-warning">${defLabel}</span>
+        <button class="btn btn-sm btn-outline-secondary ms-2" onclick="openDefaultPicker('${u.user_name}')">Change</button>
+      </td>
+      <td>${u.event_count}</td>
+      <td>${u.last_sync ? new Date(u.last_sync).toLocaleString() : '—'}</td>
+      <td><button class="btn btn-sm btn-outline-danger" onclick="disconnect('${u.user_name}')">Disconnect</button></td>
+    </tr>`;
+  }).join('');
+  sync.innerHTML = j.users.map(u =>
+    `<button class="btn btn-sm btn-outline-secondary" onclick="syncNow('${u.user_name}')">↻ ${u.user_name}</button>`
+  ).join('');
+}
+async function genUrl() {
+  const user_name = document.getElementById('userField').value;
+  const r = await fetch('/google/oauth/start', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({user_name})});
+  const j = await r.json();
+  if (!j.ok) { document.getElementById('authUrlBox').textContent = 'error: ' + JSON.stringify(j); return; }
+  document.getElementById('userField2').value = user_name;
+  document.getElementById('authUrlBox').innerHTML =
+    '<div class="text-secondary mb-1">Auth URL for <strong>' + user_name + '</strong>:</div>' +
+    '<div class="p-2" style="background:#0f1419;border-radius:6px;word-break:break-all"><a href="' + j.auth_url + '" target="_blank" class="text-warning">' + j.auth_url + '</a></div>';
+}
+async function finishOauth() {
+  const user_name = document.getElementById('userField2').value;
+  const callback_url = document.getElementById('callbackField').value.trim();
+  const out = document.getElementById('finishResult');
+  out.innerHTML = '<span class="text-secondary">exchanging…</span>';
+  const r = await fetch('/google/oauth/finish', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({user_name, callback_url})});
+  const j = await r.json();
+  out.textContent = JSON.stringify(j);
+  if (j.ok) {
+    document.getElementById('callbackField').value = '';
+    syncNow(user_name);
+    loadStatus();
+  }
+}
+async function openDefaultPicker(user_name) {
+  document.getElementById('defaultUser').textContent = user_name;
+  const wrap = document.getElementById('defaultPicker');
+  const list = document.getElementById('calendarsList');
+  wrap.style.display = 'block';
+  list.innerHTML = '<span class="text-secondary small">loading…</span>';
+  const r = await fetch('/google/calendars/' + encodeURIComponent(user_name));
+  const j = await r.json();
+  if (!j.ok) { list.innerHTML = '<span class="text-warning">' + (j.error || 'failed') + '</span>'; return; }
+  list.innerHTML = j.calendars.map(c => {
+    const checked = c.is_default ? '✓' : '';
+    const writable = (c.access_role === 'owner' || c.access_role === 'writer');
+    const cls = checked ? 'btn-warning' : (writable ? 'btn-outline-warning' : 'btn-outline-secondary');
+    const tooltip = writable ? '' : 'title="read-only — Benson can\'t write here"';
+    return `<button class="btn btn-sm ${cls}" ${tooltip}
+              ${writable ? '' : 'disabled'}
+              onclick="setDefault('${user_name}','${c.id}','${(c.summary||'').replace(/'/g,"")}')">${checked} ${c.summary || c.id} ${c.primary?'(primary)':''}</button>`;
+  }).join('');
+}
+
+function closeDefaultPicker() {
+  document.getElementById('defaultPicker').style.display = 'none';
+}
+
+async function setDefault(user_name, calendar_id, calendar_name) {
+  const r = await fetch('/google/default-calendar', {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({user_name, calendar_id, calendar_name}),
+  });
+  const j = await r.json();
+  if (j.ok) {
+    closeDefaultPicker();
+    loadStatus();
+  } else {
+    alert('failed: ' + (j.error || JSON.stringify(j)));
+  }
+}
+
+async function disconnect(user_name) {
+  if (!confirm('Disconnect ' + user_name + '? This deletes their stored tokens and synced events.')) return;
+  await fetch('/google/disconnect', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({user_name})});
+  loadStatus();
+}
+async function syncNow(user_name) {
+  document.getElementById('syncResult').innerHTML = '<span class="text-secondary">syncing ' + user_name + '…</span>';
+  const r = await fetch('/google/sync/' + encodeURIComponent(user_name), {method:'POST'});
+  const j = await r.json();
+  document.getElementById('syncResult').textContent = JSON.stringify(j);
+  loadStatus();
+}
+loadStatus();
+setInterval(loadStatus, 30000);
+</script>
+{% endblock %}

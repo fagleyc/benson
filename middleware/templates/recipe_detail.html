@@ -1,0 +1,225 @@
+{% extends "layout.html" %}
+{% block title %}{{ recipe.title }} — Fagley House Hub{% endblock %}
+{% block content %}
+<a href="/recipes" class="text-secondary">← All recipes</a>
+
+<div class="row mt-3 g-4">
+  <div class="col-12 col-lg-4">
+    {% if recipe.image_url %}
+      <img src="{{ recipe.image_url }}" class="img-fluid rounded mb-3" id="recipeImage">
+    {% endif %}
+
+    <h2 class="editable" data-field="title" id="recipeTitle">{{ recipe.title }}</h2>
+
+    <div class="text-secondary mb-2">
+      <span class="editable" data-field="course" id="recipeCourse">{% if recipe.course %}{{ recipe.course }}{% else %}—{% endif %}</span>
+      <span> · </span>
+      <span class="editable" data-field="prep_time" id="recipePrep">{% if recipe.prep_time %}{{ recipe.prep_time }} min{% else %}— min{% endif %}</span>
+    </div>
+
+    {% if recipe.source_url %}
+      <p class="small mb-2"><a href="{{ recipe.source_url }}" target="_blank" hx-boost="false" class="text-warning">Original source ↗</a></p>
+    {% endif %}
+
+    <!-- 5-star rating -->
+    <div class="mb-3">
+      <label class="text-secondary small text-uppercase">My rating</label>
+      <div id="starContainer" style="font-size:1.7rem;line-height:1;"></div>
+    </div>
+
+    <!-- Comments -->
+    <div class="mb-3">
+      <label class="text-secondary small text-uppercase">Comments</label>
+      <div id="commentsView" class="editable p-2 bg-dark border border-secondary rounded" style="min-height:3rem;white-space:pre-wrap" data-field="user_comments">{{ recipe.user_comments or '(click to add a comment)' }}</div>
+    </div>
+
+    <a href="/recipes/{{ recipe.id }}/cook" hx-boost="false" class="btn btn-warning btn-lg w-100 mb-2">🍳 Cook</a>
+    <button class="btn btn-outline-danger btn-sm w-100" onclick="deleteRecipe()">Delete recipe</button>
+  </div>
+
+  <div class="col-12 col-lg-4">
+    <h5 class="d-flex justify-content-between align-items-baseline">
+      Ingredients
+      <button class="btn btn-sm btn-outline-secondary" onclick="editList('ingredients')">Edit</button>
+    </h5>
+    <ul class="list-group list-group-flush" id="ingredientsList">
+      {% for ing in recipe.ingredients %}
+        <li class="list-group-item bg-dark text-light px-0">
+          {{ ing.text or ing }}
+        </li>
+      {% else %}
+        <li class="list-group-item bg-dark text-secondary px-0">No ingredients recorded.</li>
+      {% endfor %}
+    </ul>
+  </div>
+
+  <div class="col-12 col-lg-4">
+    <h5 class="d-flex justify-content-between align-items-baseline">
+      Steps
+      <button class="btn btn-sm btn-outline-secondary" onclick="editList('steps')">Edit</button>
+    </h5>
+    <ol class="ps-3" id="stepsList">
+      {% for step in recipe.steps %}
+        <li class="mb-2">{{ step }}</li>
+      {% else %}
+        <li class="text-secondary">No steps recorded.</li>
+      {% endfor %}
+    </ol>
+  </div>
+</div>
+
+<div class="mt-4">
+  <h6 class="text-uppercase text-secondary small">Notes</h6>
+  <div id="notesView" class="editable p-2 bg-dark border border-secondary rounded" style="min-height:3rem;white-space:pre-wrap" data-field="notes">{{ recipe.notes or '(click to add notes)' }}</div>
+</div>
+
+<style>
+  .editable { cursor: pointer; transition: background 0.1s; padding: 2px 6px; border-radius: 4px; }
+  .editable:hover { background: rgba(243, 156, 18, 0.10); outline: 1px dashed #f39c12; }
+  .editing { background: rgba(243, 156, 18, 0.05) !important; outline: 1px solid #f39c12 !important; }
+  .star { cursor: pointer; color: gold; margin-right: 4px; user-select: none; }
+  .star.dim { opacity: 0.35; }
+  .star:hover { transform: scale(1.15); }
+</style>
+
+<script>
+(function(){
+const RECIPE_ID = {{ recipe.id }};
+
+// ─── Star rating ─────────────────────────────────────────────────────
+let currentRating = {{ recipe.user_rating or 0 }};
+const starBox = document.getElementById('starContainer');
+function renderStars(r) {
+  starBox.innerHTML = '';
+  for (let i = 1; i <= 5; i++) {
+    const s = document.createElement('span');
+    s.className = 'star' + (i <= r ? '' : ' dim');
+    s.textContent = i <= r ? '★' : '☆';
+    s.addEventListener('click', () => setRating(i));
+    s.addEventListener('mouseenter', () => previewStars(i));
+    s.addEventListener('mouseleave', () => renderStars(currentRating));
+    starBox.appendChild(s);
+  }
+}
+function previewStars(r) {
+  Array.from(starBox.children).forEach((s, i) => {
+    s.textContent = i < r ? '★' : '☆';
+    s.classList.toggle('dim', i >= r);
+  });
+}
+async function setRating(r) {
+  try {
+    const res = await fetch(`/api/recipes/${RECIPE_ID}/rating`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({rating: r}),
+    });
+    const j = await res.json();
+    currentRating = j.user_rating || r;
+    renderStars(currentRating);
+  } catch (e) { alert('rating save failed: ' + e.message); }
+}
+renderStars(currentRating);
+
+// ─── Inline edit (single-line and textarea fields) ───────────────────
+async function saveField(field, value) {
+  const body = {};
+  body[field] = value;
+  // prep_time: extract integer from "30 min" etc.
+  if (field === 'prep_time') {
+    const n = parseInt(String(value).replace(/[^0-9-]/g, ''), 10);
+    body[field] = isNaN(n) ? null : n;
+  }
+  const res = await fetch(`/api/recipes/${RECIPE_ID}/update`, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const t = await res.text();
+    alert('save failed: ' + t);
+  }
+  return res.ok;
+}
+
+document.querySelectorAll('.editable').forEach(el => {
+  el.addEventListener('click', () => {
+    if (el.classList.contains('editing')) return;
+    const field = el.dataset.field;
+    const isMultiline = el.id === 'commentsView' || el.id === 'notesView';
+    const current = el.textContent.trim();
+    // Strip placeholder
+    const initial = (current.startsWith('(click') ? '' :
+                    field === 'prep_time' ? current.replace(/[^0-9]/g, '') :
+                    current === '—' ? '' : current);
+    const input = document.createElement(isMultiline ? 'textarea' : 'input');
+    input.value = initial;
+    input.className = 'form-control form-control-sm bg-dark text-light border-warning';
+    if (isMultiline) input.rows = 4;
+    el.classList.add('editing');
+    el.replaceChildren(input);
+    input.focus();
+    input.select();
+
+    let cancelled = false;
+    const finish = async () => {
+      if (cancelled) return;
+      const value = input.value.trim();
+      const ok = await saveField(field, value);
+      el.classList.remove('editing');
+      let display = value;
+      if (field === 'prep_time') display = value ? value + ' min' : '— min';
+      if (!value && (field === 'course')) display = '—';
+      if (!value && (field === 'user_comments')) display = '(click to add a comment)';
+      if (!value && (field === 'notes')) display = '(click to add notes)';
+      el.textContent = display || '(empty)';
+    };
+    input.addEventListener('blur', finish);
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        cancelled = true;
+        el.classList.remove('editing');
+        location.reload();
+      }
+      if (e.key === 'Enter' && !isMultiline) {
+        e.preventDefault();
+        finish();
+      }
+    });
+  });
+});
+
+// ─── List edit (ingredients / steps) ─────────────────────────────────
+window.editList = async function(field) {
+  const listEl = document.getElementById(field === 'ingredients' ? 'ingredientsList' : 'stepsList');
+  const current = Array.from(listEl.querySelectorAll('li'))
+    .map(li => li.textContent.trim())
+    .filter(t => t && !t.toLowerCase().startsWith('no ') && !t.toLowerCase().startsWith('—'))
+    .join('\n');
+  const next = prompt(
+    `Edit ${field} — one per line:`,
+    current
+  );
+  if (next === null) return;  // cancelled
+  const lines = next.split('\n').map(s => s.trim()).filter(Boolean);
+  const body = {};
+  body[field] = field === 'ingredients' ? lines.map(l => ({text: l})) : lines;
+  const res = await fetch(`/api/recipes/${RECIPE_ID}/update`, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(body),
+  });
+  if (res.ok) location.reload();
+  else alert('save failed: ' + await res.text());
+};
+
+// ─── Delete ──────────────────────────────────────────────────────────
+window.deleteRecipe = async function() {
+  if (!confirm('Delete this recipe permanently? This cannot be undone.')) return;
+  const res = await fetch(`/api/recipes/${RECIPE_ID}`, {method: 'DELETE'});
+  if (res.ok) window.location = '/recipes';
+  else alert('delete failed: ' + await res.text());
+};
+})();
+</script>
+{% endblock %}

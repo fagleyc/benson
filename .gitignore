@@ -1,0 +1,51 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+.pytest_cache/
+
+# Virtual environments
+middleware/venv/
+**/venv/
+**/.venv/
+
+# Transient session/runtime state
+middleware/sessions/
+middleware/audio/
+*.log
+*.pid
+
+# User data — must NEVER be in git
+memory/
+recipes/
+context/
+backup/
+backups/
+
+# Service / model bundles (machine-specific, large)
+ha/
+music_assistant/
+signal/
+whatsapp/
+kokoro/
+openwakeword/
+whisper/
+logs/
+
+# Secrets — these live in /etc/benson/env, not the repo, but defense-in-depth
+*.env
+.env*
+secrets/
+*.pem
+*.key
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+*.swp
+*~
+
+# Self-modification artifacts
+proposals/*.log

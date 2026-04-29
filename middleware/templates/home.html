@@ -1,0 +1,341 @@
+{% extends "layout.html" %}
+{% block title %}Fagley House Hub{% endblock %}
+{% block content %}
+<style>
+  .home-hero { background: linear-gradient(135deg, #1f2730 0%, #2a3340 100%); border: 1px solid #3a4a5a; }
+  .clock-big { font-family: ui-monospace, SF Mono, Menlo, monospace; font-weight: 600; letter-spacing: -0.02em; font-size: 3.5rem; line-height: 1.05; }
+  .home-card { background: #1a2128; border: 1px solid #2d3a47; border-radius: 12px; transition: border-color .15s; }
+  .home-card:hover { border-color: #4d5d6e; }
+  .weather-now-temp { font-size: 3rem; font-weight: 600; line-height: 1; }
+  .weather-icon { font-size: 2.5rem; }
+  .forecast-day { padding: .5rem .25rem; text-align: center; border-radius: 8px; }
+  .forecast-day:hover { background: #243040; }
+  .forecast-temp { font-weight: 600; }
+  .meal-image { aspect-ratio: 16/9; object-fit: cover; border-radius: 8px; }
+  .chore-bar { height: 6px; border-radius: 3px; background: #2a3340; overflow: hidden; }
+  .chore-bar > div { height: 100%; background: linear-gradient(90deg, #f39c12, #e67e22); }
+  .greet { color: #e0c98a; }
+
+  /* iPad / tablet bump — kitchen-readable text on the counter-mounted hub */
+  @media (min-width: 768px) and (max-width: 1366px) {
+    .clock-big                   { font-size: 5.5rem !important; }
+    #dateDisplay                 { font-size: 1.65rem !important; }
+    .greet                       { font-size: 1.1rem; }
+    .weather-now-temp            { font-size: 4.5rem; }
+    .weather-icon                { font-size: 3.5rem; }
+    .forecast-temp               { font-size: 1.5rem; }
+    .forecast-day .text-secondary.small { font-size: 1rem; }
+    #weatherWidget .text-secondary.text-capitalize { font-size: 1.3rem; }
+    #weatherWidget .text-uppercase.small { font-size: 1rem; }
+    .home-card h6.text-uppercase { font-size: 1.05rem !important; }
+    #mealBlock .fw-semibold      { font-size: 1.65rem; }
+    #mealBlock .text-secondary.small { font-size: 1.1rem; }
+    #mealBlock .btn              { font-size: 1.05rem; padding: 0.5rem 1rem; }
+    #calendarWidget              { font-size: 1.25rem; }
+    #calendarWidget .text-warning.small { font-size: 1.1rem !important; }
+    #calendarWidget .text-secondary.small { font-size: 1.05rem !important; }
+    #choresWidget strong         { font-size: 1.5rem; }
+    #choresWidget .badge         { font-size: 1rem; }
+    #choresWidget .text-secondary.small { font-size: 1rem !important; }
+    .home-card                   { padding: 1.4rem !important; }
+  }
+</style>
+
+<!-- ─── Top row: Greeting + Clock | Weather ──────────────────────── -->
+<div class="row g-3 mb-3">
+
+  <!-- Greeting + clock + tonight's meal -->
+  <div class="col-12 col-lg-7">
+    <div class="home-card home-hero p-4 h-100">
+      <div class="d-flex justify-content-between align-items-start">
+        <div>
+          <div class="greet small text-uppercase" id="greetText">Welcome home</div>
+          <div class="clock-big text-light" id="clockDisplay">--:--</div>
+          <div class="text-secondary" id="dateDisplay" style="font-size: 1.05rem;">—</div>
+        </div>
+        <div class="text-end">
+          <div class="text-secondary small text-uppercase">Tonight's Meal</div>
+          <div id="mealBlock" class="mt-2 text-end">
+            <span class="text-secondary">—</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Weather widget (current + 5-day) -->
+  <div class="col-12 col-lg-5">
+    <div class="home-card p-3 h-100" id="weatherWidget">
+      <div class="text-secondary small">Loading weather…</div>
+    </div>
+  </div>
+</div>
+
+<!-- ─── Middle row: Calendar ──────────────────────────────────────── -->
+<div class="row g-3 mb-3">
+  <div class="col-12">
+    <div class="home-card p-3">
+      <div class="d-flex justify-content-between align-items-center mb-2 flex-wrap gap-2">
+        <h6 class="text-uppercase text-secondary small mb-0">Calendar</h6>
+        <div class="btn-group btn-group-sm" role="group" id="calendarRange">
+          <button type="button" class="btn btn-outline-warning active" data-days="1">Today</button>
+          <button type="button" class="btn btn-outline-warning" data-days="2">+Tomorrow</button>
+          <button type="button" class="btn btn-outline-warning" data-days="7">Week</button>
+          <a href="/admin/google" class="btn btn-outline-secondary ms-2">Manage</a>
+        </div>
+      </div>
+      <div id="calendarWidget" class="text-secondary small">Loading…</div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+// Clean up any intervals from a previous mount of this page (HTMX boost
+// re-runs scripts on each navigation back).
+if (window.__homeTimers) window.__homeTimers.forEach(id => clearInterval(id));
+window.__homeTimers = [];
+const PERSON_COLORS = {Casey:'#6ec1e4', Lindsey:'#e69ec1', Cole:'#7fdb9b', Zander:'#f7c873', Family:'#c79bff', Holiday:'#888'};
+let calendarDays = 1;
+function fmtTime(iso, allDay) {
+  if (!iso) return '';
+  if (allDay) return 'All day';
+  const d = new Date(iso);
+  return d.toLocaleTimeString([], {hour:'numeric', minute:'2-digit'});
+}
+function dayKey(iso) {
+  const d = new Date(iso);
+  const t = new Date(); const tomorrow = new Date(); tomorrow.setDate(tomorrow.getDate()+1);
+  if (d.toDateString() === t.toDateString()) return 'Today';
+  if (d.toDateString() === tomorrow.toDateString()) return 'Tomorrow';
+  return d.toLocaleDateString([], {weekday:'short', month:'short', day:'numeric'});
+}
+async function loadCalendar() {
+  try {
+    const r = await fetch('/api/calendar/upcoming?days=' + calendarDays);
+    const j = await r.json();
+    const wrap = document.getElementById('calendarWidget');
+    if (!j.linked_users || j.linked_users.length === 0) {
+      wrap.innerHTML = '<div class="text-secondary py-3 text-center" style="border:1px dashed #3a4a5a;border-radius:8px;">No accounts linked yet — <a href="/admin/google" class="text-warning">connect Gmail/Calendar</a>.</div>';
+      return;
+    }
+    const today = new Date();
+    const cutoff = new Date(today); cutoff.setDate(cutoff.getDate() + calendarDays); cutoff.setHours(0,0,0,0);
+    const filtered = j.events.filter(e => {
+      const d = new Date(e.starts_at);
+      return d < cutoff;
+    });
+    if (filtered.length === 0) {
+      wrap.innerHTML = '<div class="text-secondary py-2">Nothing scheduled in the selected range.</div>';
+      return;
+    }
+    const groups = {};
+    filtered.forEach(e => {
+      const k = dayKey(e.starts_at);
+      (groups[k] = groups[k] || []).push(e);
+    });
+    let html = '';
+    for (const day of Object.keys(groups)) {
+      html += '<div class="mb-2"><div class="text-warning small fw-bold mb-1">' + day + '</div>';
+      groups[day].forEach(e => {
+        const persons = (e.persons && e.persons.length) ? e.persons : [e.person || e.user_name];
+        // One colored dot per person tagged on this event
+        const dots = persons.map(p => {
+          const c = PERSON_COLORS[p] || '#aaa';
+          return '<span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:' + c + ';margin-right:3px;" title="' + p + '"></span>';
+        }).join('');
+        const tagText = persons.join(', ');
+        html += '<div class="d-flex gap-2 align-items-baseline mb-1">'
+          + '<span style="flex-shrink:0;margin-top:6px;display:inline-flex;">' + dots + '</span>'
+          + '<span class="text-secondary" style="min-width:80px">' + fmtTime(e.starts_at, e.all_day) + '</span>'
+          + '<span class="text-light flex-grow-1">' + (e.title || '(untitled)') + '</span>'
+          + '<span class="text-secondary small">' + tagText + '</span>'
+          + '</div>';
+      });
+      html += '</div>';
+    }
+    wrap.innerHTML = html;
+  } catch (e) {
+    document.getElementById('calendarWidget').textContent = 'error: ' + e.message;
+  }
+}
+document.querySelectorAll('#calendarRange button[data-days]').forEach(b => {
+  b.addEventListener('click', () => {
+    document.querySelectorAll('#calendarRange button[data-days]').forEach(x => x.classList.remove('active'));
+    b.classList.add('active');
+    calendarDays = parseInt(b.dataset.days, 10);
+    loadCalendar();
+  });
+});
+loadCalendar();
+window.__homeTimers.push(setInterval(loadCalendar, 5 * 60 * 1000));
+})();
+</script>
+
+<!-- ─── Bottom row: Chores ──────────────────────────────────────── -->
+<div class="row g-3 mb-3">
+  <div class="col-12">
+    <div class="home-card p-3">
+      <div class="d-flex justify-content-between align-items-center mb-2">
+        <h6 class="text-uppercase text-secondary small mb-0">Today's Chores</h6>
+        <a href="/chores" class="small text-warning text-decoration-none">All chores →</a>
+      </div>
+      <div id="choresWidget" class="row g-2">
+        <div class="col-12 text-secondary small">Loading…</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ─── Footer row: Message of the Day ───────────────────────────── -->
+<div class="row g-3">
+  <div class="col-12">
+    <div class="home-card p-3 d-flex flex-column" style="min-height: 130px;">
+      <div class="d-flex justify-content-between align-items-baseline mb-2">
+        <h6 class="text-uppercase text-secondary small mb-0">Benson's Take Today</h6>
+        <button class="btn btn-sm btn-outline-secondary" onclick="refreshMotd(true)" title="Generate a new one">↻</button>
+      </div>
+      <div id="motdBody" class="flex-grow-1 d-flex align-items-center" style="font-size: 1.15rem; line-height: 1.45; font-style: italic; color: #e0c98a;">
+        <span class="text-secondary">…</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<style>
+  /* Bigger MOTD on iPad */
+  @media (min-width: 768px) and (max-width: 1366px) {
+    #motdBody { font-size: 1.5rem !important; line-height: 1.4 !important; }
+  }
+</style>
+
+<script>
+async function refreshMotd(force) {
+  const url = '/api/motd' + (force ? '?refresh=1' : '');
+  const el = document.getElementById('motdBody');
+  if (force) el.innerHTML = '<span class="text-secondary">thinking…</span>';
+  try {
+    const r = await fetch(url);
+    const j = await r.json();
+    el.textContent = j.message || '(no message)';
+  } catch (e) {
+    el.textContent = '(motd unavailable)';
+  }
+}
+refreshMotd(false);
+</script>
+
+<script>
+(function(){
+const WX_ICON = {
+  "sunny": "☀️", "clear-night": "🌙", "partlycloudy": "⛅",
+  "cloudy": "☁️", "fog": "🌫️", "rainy": "🌧️", "pouring": "⛈",
+  "snowy": "❄️", "snowy-rainy": "🌨", "windy": "💨", "windy-variant": "💨",
+  "lightning": "⚡", "lightning-rainy": "⛈", "hail": "🌨", "exceptional": "⚠️"
+};
+
+function tick() {
+  const n = new Date();
+  document.getElementById("clockDisplay").textContent =
+    n.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
+  document.getElementById("dateDisplay").textContent =
+    n.toLocaleDateString([], {weekday: 'long', month: 'long', day: 'numeric'});
+  const h = n.getHours();
+  document.getElementById("greetText").textContent =
+    h < 12 ? "Good morning" : h < 17 ? "Good afternoon" : h < 21 ? "Good evening" : "Good night";
+}
+tick();
+
+// Today's meal + chores
+async function loadToday() {
+  try {
+    const r = await fetch('/api/today'); const j = await r.json();
+    const meal = j.meal || {};
+    const mb = document.getElementById('mealBlock');
+    if (meal.title) {
+      mb.innerHTML = `
+        <div class="d-flex flex-column align-items-end">
+          ${meal.image_url ? `<img src="${meal.image_url}" class="meal-image mb-2" style="width: 220px;" alt="">` : ''}
+          <div class="fw-semibold">${meal.title}</div>
+          ${meal.course ? `<div class="text-secondary small">${meal.course}</div>` : ''}
+          <a href="/recipes/${meal.recipe_id}" class="btn btn-sm btn-warning mt-1">View Recipe</a>
+        </div>`;
+    } else {
+      mb.innerHTML = `<span class="text-secondary">No meal scheduled.</span> <a href="/weekly" class="btn btn-sm btn-outline-warning ms-2">Plan one →</a>`;
+    }
+
+    const cw = document.getElementById('choresWidget');
+    const chores = j.chores || [];
+    if (chores.length) {
+      cw.innerHTML = chores.map(c => {
+        const total = (c.open || 0) + (c.done_count || 0);
+        const pct = total ? Math.round(100 * (c.done_count || 0) / total) : 0;
+        const tag = (c.person === 'Cole' || c.person === 'Zander') ? 'bg-info' : 'bg-secondary';
+        return `<div class="col-12 col-md-4">
+          <div class="p-3" style="background:#1a2128;border:1px solid #2d3a47;border-radius:10px;">
+            <div class="d-flex justify-content-between mb-2">
+              <strong>${c.person}</strong>
+              <span class="badge ${tag}">${total} total</span>
+            </div>
+            <div class="d-flex justify-content-between small text-secondary mb-1">
+              <span>${c.open || 0} open</span><span>${c.done_count || 0} done</span>
+            </div>
+            <div class="chore-bar"><div style="width: ${pct}%"></div></div>
+          </div>
+        </div>`;
+      }).join('');
+    } else {
+      cw.innerHTML = '<div class="col-12 text-secondary small text-center py-3">Nothing on the board today. Nice.</div>';
+    }
+  } catch(e) { console.warn(e); }
+}
+loadToday();
+
+// Weather widget
+async function loadWeather() {
+  try {
+    const r = await fetch('/api/weather?days=5'); const j = await r.json();
+    const cur = j.current || {};
+    const fc = j.forecast || [];
+    const icon = WX_ICON[cur.condition] || "🌡️";
+    const wx = document.getElementById('weatherWidget');
+    const days = fc.map((d, i) => {
+      const dt = new Date(d.datetime);
+      const dayLabel = i === 0 ? 'Today' : dt.toLocaleDateString([], {weekday:'short'});
+      const dIcon = WX_ICON[d.condition] || "·";
+      return `<div class="forecast-day flex-fill">
+        <div class="text-secondary small">${dayLabel}</div>
+        <div style="font-size:1.5rem">${dIcon}</div>
+        <div class="forecast-temp">${Math.round(d.temperature)}°</div>
+        <div class="text-secondary small">${Math.round(d.templow)}°</div>
+      </div>`;
+    }).join('');
+    wx.innerHTML = `
+      <div class="d-flex justify-content-between align-items-start mb-2">
+        <div>
+          <div class="text-secondary small text-uppercase">Colorado Springs</div>
+          <div class="weather-now-temp text-light">${Math.round(cur.temperature || 0)}°<span class="text-secondary fs-4">${cur.temperature_unit||'F'}</span></div>
+          <div class="text-secondary text-capitalize">${(cur.condition||'').replace(/[-_]/g,' ')}</div>
+        </div>
+        <div class="text-end">
+          <div class="weather-icon">${icon}</div>
+          <div class="text-secondary small mt-2">
+            ${cur.humidity ? cur.humidity+'% hum' : ''}
+            ${cur.wind_speed ? '<br>'+Math.round(cur.wind_speed)+' '+(cur.wind_speed_unit||'mph') : ''}
+          </div>
+        </div>
+      </div>
+      <hr class="border-secondary">
+      <div class="d-flex justify-content-between gap-1">${days}</div>`;
+  } catch(e) {
+    document.getElementById('weatherWidget').innerHTML = `<div class="text-warning small">Weather unavailable.</div>`;
+  }
+}
+loadWeather();
+window.__homeTimers = window.__homeTimers || [];
+window.__homeTimers.push(setInterval(tick, 1000));
+window.__homeTimers.push(setInterval(loadToday, 60000));
+window.__homeTimers.push(setInterval(loadWeather, 5 * 60 * 1000));
+})();
+</script>
+{% endblock %}

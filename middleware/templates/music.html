@@ -1,0 +1,320 @@
+{% extends "layout.html" %}
+{% block title %}Music — Fagley House Hub{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h2 class="mb-0">🎵 Music</h2>
+  <small class="text-secondary">Apple Music via Music Assistant · routes to any Sonos zone</small>
+</div>
+
+<!-- Zone picker + grouping -->
+<div class="card bg-dark border-secondary p-2 mb-3">
+  <div class="d-flex justify-content-between align-items-baseline mb-2">
+    <strong class="small text-uppercase text-secondary">Zones</strong>
+    <span class="small text-secondary">Active = primary · 🔗 = grouped with primary</span>
+  </div>
+  <div class="d-flex flex-wrap gap-2" id="zonePicker"></div>
+  <div class="d-flex gap-2 mt-2 small">
+    <button class="btn btn-sm btn-outline-warning" id="ungroupActiveBtn" onclick="ungroupActive()" style="display:none">Ungroup primary</button>
+  </div>
+</div>
+
+<div class="row g-3">
+  <!-- Now playing + transport -->
+  <div class="col-12">
+    <div class="card bg-dark border-secondary">
+      <div class="card-body" id="nowPlayingCard">
+        <div class="d-flex gap-3 align-items-center">
+          <img id="np-art" src="" alt="" style="height:90px;width:90px;border-radius:6px;object-fit:cover;background:#333;display:none">
+          <div id="np-art-fallback" style="width:90px;height:90px;background:#333;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:2rem">🎵</div>
+          <div class="flex-grow-1 min-w-0">
+            <div class="text-secondary small text-uppercase" id="np-zone-state">—</div>
+            <div class="fs-5 fw-semibold text-truncate" id="np-title">—</div>
+            <div class="text-secondary text-truncate" id="np-artist">—</div>
+          </div>
+          <div class="d-flex gap-1">
+            <button class="btn btn-outline-light" onclick="bensonMusic.ctrl('previous')">⏮</button>
+            <button class="btn btn-warning" id="np-play-btn" onclick="bensonMusic.togglePlay()">▶</button>
+            <button class="btn btn-outline-light" onclick="bensonMusic.ctrl('next')">⏭</button>
+          </div>
+          <div style="min-width:140px">
+            <input type="range" class="form-range" id="np-volume" min="0" max="1" step="0.02" value="0.4">
+            <div class="text-secondary small text-center" id="np-volume-label">—%</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Search -->
+  <div class="col-12 col-lg-6">
+    <div class="card bg-dark border-secondary h-100">
+      <div class="card-header bg-dark border-secondary">
+        <form id="searchForm" class="d-flex gap-2">
+          <input type="text" id="searchQuery" class="form-control bg-dark text-light border-secondary" placeholder="Search Apple Music — playlists, artists, albums, songs…">
+          <select id="searchType" class="form-select bg-dark text-light border-secondary" style="width:auto">
+            <option value="playlist">Playlists</option>
+            <option value="album">Albums</option>
+            <option value="artist">Artists</option>
+            <option value="track">Songs</option>
+          </select>
+          <button class="btn btn-warning">Search</button>
+        </form>
+      </div>
+      <div class="card-body" id="searchResults" style="max-height: 60vh; overflow-y: auto;">
+        <div class="text-secondary small text-center py-4">Search Apple Music. Click any result to play on the active zone.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Playlists -->
+  <div class="col-12 col-lg-6">
+    <div class="card bg-dark border-secondary h-100">
+      <div class="card-header bg-dark border-secondary d-flex justify-content-between align-items-center">
+        <strong>Library Playlists</strong>
+        <button id="refreshPlaylists" class="btn btn-sm btn-outline-secondary">↻</button>
+      </div>
+      <div class="card-body" id="playlistsList" style="max-height: 60vh; overflow-y: auto;">
+        <div class="text-secondary small text-center py-4">Loading…</div>
+      </div>
+      <div class="card-footer bg-dark border-secondary text-secondary small">
+        <strong>Don't see your Apple Music playlists?</strong> They only appear here once they're in MA's library.
+        Open <a href="http://192.168.0.240:8095" target="_blank" hx-boost="false" class="text-warning">Music Assistant</a> →
+        Apple Music → Playlists → favorite the ones you want shown here.
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+// Clear any prior music timers (HTMX boost re-runs scripts on nav)
+if (window.__musicTimers) window.__musicTimers.forEach(id => clearInterval(id));
+window.__musicTimers = [];
+
+const ZONES = [
+  { room: 'kitchen',        entity: 'media_player.kitchen_2',        label: 'Kitchen' },
+  { room: 'family_room',    entity: 'media_player.family_room_2',    label: 'Family Room' },
+  { room: 'tv_room',        entity: 'media_player.tv_room_2',        label: 'TV Room' },
+  { room: 'master_bedroom', entity: 'media_player.bathroom_2',       label: 'Master Bedroom' },
+  { room: 'move',           entity: 'media_player.move_2',           label: 'Move (Patio)' },
+];
+let activeZone = ZONES[0];
+let lastPlayers = [];      // last polled state, keyed by entity_id
+let userTouchingVolume = false;
+
+// ─── Render zone picker (once) ───────────────────────────────────────
+const picker = document.getElementById('zonePicker');
+ZONES.forEach((z, i) => {
+  const wrap = document.createElement('div');
+  wrap.className = 'd-flex align-items-center';
+  wrap.dataset.entity = z.entity;
+  wrap.innerHTML = `
+    <button class="btn btn-sm btn-outline-warning zone-btn" data-entity="${z.entity}">${z.label}</button>
+    <button class="btn btn-sm btn-outline-secondary ms-1 chain-btn" data-entity="${z.entity}" title="Toggle group with primary" style="display:none">🔗</button>
+  `;
+  picker.appendChild(wrap);
+});
+
+function setActiveZone(entity) {
+  activeZone = ZONES.find(z => z.entity === entity) || ZONES[0];
+  document.querySelectorAll('.zone-btn').forEach(b => {
+    const isActive = b.dataset.entity === activeZone.entity;
+    b.classList.toggle('btn-warning', isActive);
+    b.classList.toggle('btn-outline-warning', !isActive);
+  });
+  updateGroupingUI();
+  refreshNowPlaying();
+}
+document.querySelectorAll('.zone-btn').forEach(b => {
+  b.addEventListener('click', () => setActiveZone(b.dataset.entity));
+});
+setActiveZone(activeZone.entity);
+
+// ─── Grouping UI ─────────────────────────────────────────────────────
+function updateGroupingUI() {
+  const primaryPlayer = lastPlayers.find(p => p.entity_id === activeZone.entity);
+  const primarySonos = primaryPlayer?.sonos_entity_id;
+  const primaryGroup = primaryPlayer?.group_members || [];
+
+  // Show ungroup button if primary has >1 group_member AND it's the leader
+  const ungroupBtn = document.getElementById('ungroupActiveBtn');
+  ungroupBtn.style.display = (primaryGroup.length > 1 && primaryPlayer?.is_group_leader) ? 'inline-block' : 'none';
+
+  document.querySelectorAll('.chain-btn').forEach(btn => {
+    const eid = btn.dataset.entity;
+    if (eid === activeZone.entity) { btn.style.display = 'none'; return; }
+    btn.style.display = 'inline-block';
+    const z = lastPlayers.find(p => p.entity_id === eid);
+    const inGroup = primaryGroup.includes(z?.sonos_entity_id);
+    btn.classList.toggle('btn-warning', inGroup);
+    btn.classList.toggle('btn-outline-secondary', !inGroup);
+    btn.textContent = inGroup ? '🔗' : '＋';
+    btn.title = inGroup ? `Remove ${z?.label || eid} from group` : `Add ${z?.label || eid} to group`;
+    btn.onclick = () => toggleGroupMember(eid, !inGroup);
+  });
+}
+
+async function toggleGroupMember(memberEntity, add) {
+  if (add) {
+    // Add to group: ALL currently-grouped + this one as members of primary
+    const primary = lastPlayers.find(p => p.entity_id === activeZone.entity);
+    const existing = (primary?.group_members || []).filter(e => e !== primary.sonos_entity_id);
+    const newMembers = Array.from(new Set([...existing, memberEntity]));
+    const r = await fetch('/api/music/group', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({primary: activeZone.entity, members: newMembers}),
+    });
+    if (!r.ok) alert('group failed: ' + await r.text());
+  } else {
+    const r = await fetch('/api/music/ungroup', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({entity_id: memberEntity}),
+    });
+    if (!r.ok) alert('ungroup failed: ' + await r.text());
+  }
+  setTimeout(refreshNowPlaying, 600);
+}
+
+window.ungroupActive = async function() {
+  if (!confirm('Ungroup all zones from primary?')) return;
+  const primary = lastPlayers.find(p => p.entity_id === activeZone.entity);
+  const members = (primary?.group_members || []).filter(e => e !== primary.sonos_entity_id);
+  for (const m of members) {
+    await fetch('/api/music/ungroup', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({entity_id: m}),
+    });
+  }
+  setTimeout(refreshNowPlaying, 600);
+};
+
+// ─── Now-playing in-place updates (no full re-render → no jitter) ────
+const $ = id => document.getElementById(id);
+
+async function refreshNowPlaying() {
+  try {
+    const r = await fetch('/api/music/players');
+    const j = await r.json();
+    lastPlayers = j.players || [];
+    const p = lastPlayers.find(x => x.entity_id === activeZone.entity);
+    if (!p) return;
+
+    const playing = ['playing', 'buffering'].includes(p.state);
+    const stateLabel = `${p.label || p.room} · ${p.state || 'unknown'}`;
+
+    if ($('np-zone-state').textContent !== stateLabel) $('np-zone-state').textContent = stateLabel;
+    if ($('np-title').textContent !== (p.media_title || '—')) $('np-title').textContent = p.media_title || '—';
+    const artistText = (p.media_artist || '') + (p.media_album_name ? ' · ' + p.media_album_name : '');
+    if ($('np-artist').textContent !== (artistText || '—')) $('np-artist').textContent = artistText || '—';
+
+    // Album art only updates on URL change
+    const art = $('np-art');
+    if (p.entity_picture) {
+      const url = p.entity_picture.startsWith('/') ? p.entity_picture : p.entity_picture;
+      if (art.src !== url) art.src = url;
+      art.style.display = '';
+      $('np-art-fallback').style.display = 'none';
+    } else {
+      art.style.display = 'none';
+      $('np-art-fallback').style.display = '';
+    }
+
+    // Play/pause icon
+    const pb = $('np-play-btn');
+    pb.textContent = playing ? '⏸' : '▶';
+    pb.dataset.playing = playing ? '1' : '0';
+
+    // Volume — DON'T touch while user is dragging
+    if (!userTouchingVolume) {
+      const v = (typeof p.volume === 'number') ? p.volume : 0;
+      $('np-volume').value = v;
+      $('np-volume-label').textContent = Math.round(v * 100) + '%';
+    }
+
+    updateGroupingUI();
+  } catch(e) { console.warn('refreshNowPlaying:', e); }
+}
+
+// Volume slider with touch-tracking
+const volSlider = $('np-volume');
+volSlider.addEventListener('mousedown', () => userTouchingVolume = true);
+volSlider.addEventListener('touchstart', () => userTouchingVolume = true, {passive: true});
+volSlider.addEventListener('mouseup', () => { userTouchingVolume = false; });
+volSlider.addEventListener('touchend', () => { userTouchingVolume = false; });
+volSlider.addEventListener('input', (e) => {
+  $('np-volume-label').textContent = Math.round(e.target.value * 100) + '%';
+  fetch('/api/music/control', { method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({entity_id: activeZone.entity, action: 'volume', level: parseFloat(e.target.value)}) });
+});
+
+window.bensonMusic = {
+  ctrl(action) {
+    fetch('/api/music/control', { method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({entity_id: activeZone.entity, action}) }).then(() => setTimeout(refreshNowPlaying, 500));
+  },
+  togglePlay() {
+    const playing = $('np-play-btn').dataset.playing === '1';
+    this.ctrl(playing ? 'pause' : 'play');
+  },
+  play(media_id, media_type) {
+    fetch('/api/music/play', { method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({entity_id: activeZone.entity, media_id, media_type}) }).then(() => setTimeout(refreshNowPlaying, 1500));
+  },
+};
+
+// Search
+document.getElementById('searchForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const q = document.getElementById('searchQuery').value.trim();
+  const type = document.getElementById('searchType').value;
+  if (!q) return;
+  document.getElementById('searchResults').innerHTML = '<div class="text-secondary small">Searching…</div>';
+  try {
+    const r = await fetch('/api/music/search', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({query: q, media_type: type, limit: 12}) });
+    const j = await r.json();
+    const items = (j.results && j.results[type + 's']) || (j.results && j.results.items) || [];
+    if (!items.length) { document.getElementById('searchResults').innerHTML = '<div class="text-secondary small">No results.</div>'; return; }
+    document.getElementById('searchResults').innerHTML = items.map(it => {
+      const name = it.name || it.title || '(untitled)';
+      const sub = it.artists?.map(a => a.name || a).join(', ') || it.album?.name || it.media_type || '';
+      const img = it.image || it.metadata?.images?.[0]?.path;
+      const art = img ? `<img src="${img}" style="width:48px;height:48px;border-radius:4px;object-fit:cover" alt="">` : '<div style="width:48px;height:48px;background:#333;border-radius:4px"></div>';
+      return `<div class="d-flex gap-2 align-items-center mb-2 p-2" style="border:1px solid #444;border-radius:6px;cursor:pointer" onclick="bensonMusic.play('${(it.uri||'').replace(/'/g,'')}','${type}')">
+        ${art}
+        <div class="flex-grow-1"><div class="fw-semibold">${name}</div><div class="text-secondary small">${sub}</div></div>
+        <button class="btn btn-sm btn-warning">▶</button>
+      </div>`;
+    }).join('');
+  } catch(e) { document.getElementById('searchResults').innerHTML = `<div class="text-warning">Search error: ${e}</div>`; }
+});
+
+// Playlists
+async function loadPlaylists() {
+  document.getElementById('playlistsList').innerHTML = '<div class="text-secondary small">Loading…</div>';
+  try {
+    const r = await fetch('/api/music/playlists?limit=200');
+    const j = await r.json();
+    const items = j.playlists || [];
+    if (!items.length) { document.getElementById('playlistsList').innerHTML = '<div class="text-secondary small">No playlists in library.</div>'; return; }
+    document.getElementById('playlistsList').innerHTML = items.map(p => {
+      const name = p.name || '(untitled)';
+      const provider = (p.uri || '').split('://')[0] || '';
+      const img = p.image;
+      const art = img ? `<img src="${img}" style="width:40px;height:40px;border-radius:4px;object-fit:cover" alt="">` : '<div style="width:40px;height:40px;background:#333;border-radius:4px"></div>';
+      return `<div class="d-flex gap-2 align-items-center mb-2 p-2" style="border:1px solid #444;border-radius:6px;cursor:pointer" onclick="bensonMusic.play('${(p.uri||'').replace(/'/g,'')}','playlist')">
+        ${art}
+        <div class="flex-grow-1"><div class="fw-semibold">${name}</div><div class="text-secondary small">${provider}</div></div>
+        <button class="btn btn-sm btn-warning">▶</button>
+      </div>`;
+    }).join('');
+  } catch(e) { document.getElementById('playlistsList').innerHTML = `<div class="text-warning">Error: ${e}</div>`; }
+}
+document.getElementById('refreshPlaylists').addEventListener('click', loadPlaylists);
+
+// Init
+refreshNowPlaying();
+loadPlaylists();
+window.__musicTimers.push(setInterval(refreshNowPlaying, 8000));
+})();
+</script>
+{% endblock %}

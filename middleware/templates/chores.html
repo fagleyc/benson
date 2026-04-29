@@ -1,0 +1,163 @@
+{% extends "layout.html" %}
+{% block title %}Chores — Fagley House Hub{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-baseline mb-3">
+  <h2 class="mb-0">Chores</h2>
+  <div class="text-secondary small">Person × day · click ○/✓ to toggle · hover to delete · "+ Add" for new</div>
+</div>
+
+<style>
+  .chore-grid th, .chore-grid td { vertical-align: top; padding: 0.5rem; }
+  .chore-grid th { background: #1a2128; }
+  .chore-cell { min-height: 80px; min-width: 140px; }
+  .chore-item {
+    display: flex; align-items: center; gap: 6px; padding: 4px 6px;
+    margin-bottom: 4px; background: #1a2128; border-radius: 4px;
+    border: 1px solid #2d3a47; position: relative;
+  }
+  .chore-item:hover .chore-del { opacity: 1; }
+  .chore-toggle {
+    flex-shrink: 0; width: 22px; height: 22px; border-radius: 50%;
+    border: 1px solid #555; background: transparent; color: #ddd;
+    display: grid; place-items: center; cursor: pointer; font-size: 0.85rem;
+  }
+  .chore-toggle.done { background: #198754; color: #fff; border-color: #198754; }
+  .chore-name { flex-grow: 1; font-size: 0.9rem; word-break: break-word; }
+  .chore-name.done { text-decoration: line-through; color: #888; }
+  .chore-del {
+    opacity: 0; transition: opacity 0.1s;
+    background: transparent; border: none; color: #e07070;
+    padding: 0 4px; cursor: pointer;
+  }
+  .chore-add {
+    width: 100%; padding: 3px; background: transparent;
+    border: 1px dashed #444; border-radius: 4px; color: #888;
+    cursor: pointer; font-size: 0.85rem;
+  }
+  .chore-add:hover { border-color: #f39c12; color: #f39c12; }
+  .chore-add-form { background: #2a3340; padding: 6px; border-radius: 4px; margin-top: 4px; }
+</style>
+
+<div class="table-responsive">
+  <table class="table table-dark chore-grid">
+    <thead>
+      <tr>
+        <th>Person</th>
+        {% for d in days %}
+          <th>{{ d.strftime('%a') }} <span class="text-secondary">{{ d.strftime('%m/%d') }}</span></th>
+        {% endfor %}
+      </tr>
+    </thead>
+    <tbody>
+      {% for p in persons %}
+        <tr>
+          <td><strong>{{ p }}</strong></td>
+          {% for d in days %}
+            {% set dstr = d.isoformat() %}
+            <td class="chore-cell">
+              {% for c in chores_map[p][dstr] %}
+                <div class="chore-item" data-id="{{ c.id }}">
+                  <button class="chore-toggle{% if c.done %} done{% endif %}"
+                          onclick="toggleChore({{ c.id }}, this)">{% if c.done %}✓{% else %}○{% endif %}</button>
+                  <span class="chore-name{% if c.done %} done{% endif %}"
+                        ondblclick="editChore({{ c.id }}, this)">{{ c.chore_name }}</span>
+                  <button class="chore-del" onclick="deleteChore({{ c.id }}, this)" title="Delete">×</button>
+                </div>
+              {% endfor %}
+              <button class="chore-add" onclick="showAdd('{{ p }}','{{ dstr }}', this)">+ Add</button>
+              <div class="chore-add-form" id="addform-{{ p }}-{{ dstr }}" style="display:none">
+                <input type="text" class="form-control form-control-sm bg-dark text-light border-secondary mb-1"
+                       placeholder="Chore name" data-add-input>
+                <div class="d-flex gap-1">
+                  <button class="btn btn-sm btn-warning flex-fill"
+                          onclick="addChore('{{ p }}','{{ dstr }}', this)">Add</button>
+                  <button class="btn btn-sm btn-outline-secondary"
+                          onclick="hideAdd('{{ p }}','{{ dstr }}')">×</button>
+                </div>
+              </div>
+            </td>
+          {% endfor %}
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<script>
+async function toggleChore(id, btn) {
+  const r = await fetch('/api/chores/' + id + '/toggle', {method: 'POST'});
+  if (!r.ok) { alert('toggle failed'); return; }
+  const j = await r.json();
+  btn.classList.toggle('done', j.done);
+  btn.textContent = j.done ? '✓' : '○';
+  const name = btn.parentElement.querySelector('.chore-name');
+  if (name) name.classList.toggle('done', j.done);
+}
+
+async function deleteChore(id, btn) {
+  if (!confirm('Delete this chore?')) return;
+  const r = await fetch('/api/chores/' + id, {method: 'DELETE'});
+  if (!r.ok) { alert('delete failed'); return; }
+  btn.closest('.chore-item').remove();
+}
+
+async function editChore(id, span) {
+  const old = span.textContent.trim();
+  const next = prompt('Rename chore:', old);
+  if (next === null || next.trim() === old) return;
+  const r = await fetch('/api/chores/' + id + '/update', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({chore_name: next.trim()}),
+  });
+  if (!r.ok) { alert('rename failed'); return; }
+  span.textContent = next.trim();
+}
+
+function showAdd(person, dstr, btn) {
+  const f = document.getElementById('addform-' + person + '-' + dstr);
+  f.style.display = 'block';
+  btn.style.display = 'none';
+  f.querySelector('[data-add-input]').focus();
+}
+
+function hideAdd(person, dstr) {
+  const f = document.getElementById('addform-' + person + '-' + dstr);
+  f.style.display = 'none';
+  f.previousElementSibling.style.display = 'block';
+  f.querySelector('[data-add-input]').value = '';
+}
+
+async function addChore(person, dstr, btn) {
+  const f = btn.closest('.chore-add-form');
+  const input = f.querySelector('[data-add-input]');
+  const name = input.value.trim();
+  if (!name) { input.focus(); return; }
+  btn.disabled = true;
+  const r = await fetch('/api/chores', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({person: person, chore_name: name, chore_date: dstr}),
+  });
+  btn.disabled = false;
+  if (!r.ok) { alert('add failed: ' + await r.text()); return; }
+  location.reload();
+}
+
+// Submit form on Enter
+document.querySelectorAll('[data-add-input]').forEach(inp => {
+  inp.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      const btn = inp.closest('.chore-add-form').querySelector('.btn-warning');
+      btn.click();
+    }
+    if (e.key === 'Escape') {
+      const f = inp.closest('.chore-add-form');
+      const matches = f.id.match(/^addform-(.+?)-(.+)$/);
+      if (matches) hideAdd(matches[1], matches[2]);
+    }
+  });
+});
+</script>
+{% endblock %}

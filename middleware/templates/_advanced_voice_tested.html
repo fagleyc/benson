@@ -1,0 +1,5 @@
+{% if result.ok %}
+<span class="text-success">▶ playing on <strong>{{ zone }}</strong> · {{ engine }}/{{ voice }}</span>
+{% else %}
+<span class="text-warning">⚠ {{ result.error }}</span>
+{% endif %}

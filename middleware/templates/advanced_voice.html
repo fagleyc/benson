@@ -1,0 +1,119 @@
+{% extends "layout.html" %}
+{% block title %}Voice Settings — Fagley House Hub{% endblock %}
+{% block content %}
+<a href="/advanced" class="text-secondary">← Advanced</a>
+
+<h2 class="mt-3 mb-1">Benson's Voice</h2>
+<p class="text-secondary">
+  Choose the TTS engine and voice. Tests preview through any Sonos zone.
+  The active configuration is used by every announcement, voice-reply, and
+  hub chat output.
+</p>
+
+<form id="voice-form" hx-post="/advanced/voice/save"
+      hx-target="#voice-save-result" hx-swap="innerHTML"
+      class="card bg-dark border-secondary p-3 mb-3">
+
+  <div class="row g-3">
+    <div class="col-12 col-md-6">
+      <label class="form-label small text-uppercase text-secondary">Engine</label>
+      <select name="engine" id="engine-select" class="form-select bg-dark text-light border-secondary"
+              hx-get="" hx-trigger="change">
+        {% for e in engines %}
+          <option value="{{ e.id }}" {% if e.id == cfg.engine %}selected{% endif %}>
+            {{ e.label }}
+          </option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="col-12 col-md-6">
+      <label class="form-label small text-uppercase text-secondary">Voice</label>
+      <select name="voice" id="voice-select" class="form-select bg-dark text-light border-secondary">
+        {% for e in engines %}
+          {% for v in e.voices %}
+            <option value="{{ v }}" data-engine="{{ e.id }}"
+              {% if e.id == cfg.engine and v == cfg.voice %}selected{% endif %}
+              {% if e.id != cfg.engine %}hidden{% endif %}>
+              {{ v }}{% if v == 'bm_george' %} (recommended for Benson — British male, dry){% endif %}
+            </option>
+          {% endfor %}
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="col-12 col-md-4">
+      <label class="form-label small text-uppercase text-secondary">Speed</label>
+      <input type="range" name="speed" min="0.5" max="1.5" step="0.05"
+             value="{{ cfg.speed }}"
+             oninput="document.getElementById('speed-display').textContent = this.value + 'x'"
+             class="form-range">
+      <small id="speed-display" class="text-secondary">{{ cfg.speed }}x</small>
+    </div>
+
+    <div class="col-12 col-md-4">
+      <label class="form-label small text-uppercase text-secondary">Test on</label>
+      <select id="test-zone" class="form-select bg-dark text-light border-secondary">
+        <option value="media_player.kitchen">Kitchen</option>
+        <option value="media_player.family_room">Family Room</option>
+        <option value="media_player.tv_room">TV Room</option>
+        <option value="media_player.bathroom">Master Bedroom (Bathroom Sonos)</option>
+        <option value="media_player.move">Move (portable)</option>
+      </select>
+    </div>
+
+    <div class="col-12 col-md-4 d-flex align-items-end">
+      <button type="button" class="btn btn-outline-warning w-100"
+              hx-post="/advanced/voice/test"
+              hx-include="#voice-form, #test-zone, #test-text"
+              hx-target="#test-result" hx-swap="innerHTML">
+        🔊 Test
+      </button>
+    </div>
+
+    <div class="col-12">
+      <label class="form-label small text-uppercase text-secondary">Test text</label>
+      <input type="text" id="test-text" name="text"
+             class="form-control bg-dark text-light border-secondary"
+             value="Hello Casey. This is the new Benson voice. How does it sound?">
+    </div>
+  </div>
+
+  <hr class="border-secondary">
+
+  <div class="d-flex gap-2">
+    <button type="submit" class="btn btn-warning">Save</button>
+    <span id="voice-save-result" class="align-self-center"></span>
+    <span id="test-result" class="align-self-center ms-3"></span>
+  </div>
+</form>
+
+<div class="card bg-dark border-secondary p-3 mb-3">
+  <h6 class="text-uppercase text-secondary small">Voice notes</h6>
+  <ul class="mb-0">
+    <li><strong>Kokoro</strong> — local, GPU-accelerated, 24 kHz, ~80M params. Highest quality.
+        For Benson's butler-engineer voice, <code>bm_george</code> is a strong pick (British male, dry).
+        <code>bm_lewis</code> is deeper, slightly more formal.</li>
+    <li><strong>Piper</strong> — local, CPU, 22 kHz. Faster but more robotic. Backup option.</li>
+    <li><strong>No Irish voice</strong> in either local engine. For genuine Irish, Edge TTS
+        or ElevenLabs would need to be added separately (cloud, paid for ElevenLabs).</li>
+  </ul>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// Filter the voice list to match the selected engine.
+document.getElementById('engine-select').addEventListener('change', e => {
+  const eid = e.target.value;
+  const sel = document.getElementById('voice-select');
+  let firstShown = null;
+  for (const opt of sel.options) {
+    const match = opt.dataset.engine === eid;
+    opt.hidden = !match;
+    if (match && firstShown === null) firstShown = opt.value;
+  }
+  if (firstShown) sel.value = firstShown;
+});
+</script>
+{% endblock %}

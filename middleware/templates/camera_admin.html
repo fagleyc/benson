@@ -1,0 +1,167 @@
+{% extends "layout.html" %}
+{% block title %}Cameras — Fagley House Hub{% endblock %}
+{% block content %}
+<a href="/advanced" class="text-secondary">← Advanced</a>
+<h2 class="mt-3 mb-3">Cameras (iPad-as-Eyeball)</h2>
+
+<div class="card bg-dark border-secondary p-3 mb-3">
+  <div class="d-flex justify-content-between align-items-center">
+    <h5 class="mb-0">Setup an iPad</h5>
+    <button class="btn btn-sm btn-outline-warning" type="button" data-bs-toggle="collapse" data-bs-target="#setupSteps">Show / hide steps</button>
+  </div>
+
+  <div class="collapse show" id="setupSteps">
+    <hr class="my-2">
+
+    <h6 class="text-uppercase small text-warning mt-2">1. Trust Benson's HTTPS (one-time per device, ~2 min)</h6>
+    <p class="text-secondary small mb-2">
+      Caddy uses an internal CA. Without trusting it, iOS marks the site "Not Secure"
+      <strong>and</strong> Safari clears camera permission every session — this is the
+      primary cause of the re-prompt loop.
+    </p>
+    <ol class="small">
+      <li><strong>On the iPad</strong>, open Safari and tap:
+        <a href="/cert/benson-caddy-root.crt" hx-boost="false" class="btn btn-warning btn-sm ms-1">⬇️ Download cert</a>
+      </li>
+      <li>"This website is trying to download a configuration profile" → tap <strong>Allow</strong>.</li>
+      <li>Open <strong>Settings</strong> → "Profile Downloaded" appears at the top → tap it.</li>
+      <li>Tap <strong>Install</strong> (top right) → enter passcode → <strong>Install</strong> → <strong>Install</strong> → <strong>Done</strong>.</li>
+      <li>Go to <strong>Settings → General → About → Certificate Trust Settings</strong>.</li>
+      <li>Toggle <strong>Caddy Local Authority</strong> <strong>ON</strong> → <strong>Continue</strong>.</li>
+    </ol>
+    <p class="small text-success">Result: "Not Secure" disappears, camera permission persists across sessions.</p>
+
+    <h6 class="text-uppercase small text-warning mt-3">2. Open the camera page</h6>
+    <p class="small mb-2">One-tap launchers (open these on the iPad in that room):</p>
+    <div class="d-flex flex-wrap gap-2 mb-2" hx-boost="false">
+      <a href="/camera/kitchen/page" target="_blank" class="btn btn-sm btn-warning">📱 Kitchen</a>
+      <a href="/camera/family_room/page" target="_blank" class="btn btn-sm btn-outline-warning">Family Room</a>
+      <a href="/camera/master_bedroom/page" target="_blank" class="btn btn-sm btn-outline-warning">Master Bedroom</a>
+      <a href="/camera/office/page" target="_blank" class="btn btn-sm btn-outline-warning">Office</a>
+    </div>
+    <p class="small text-secondary mb-2">
+      Or any custom name: <code>https://192.168.0.240/camera/&lt;name&gt;/page</code>.
+      Front camera is the default; append <code>?facing=environment</code> for back camera.
+    </p>
+    <ol class="small">
+      <li>Grant camera permission once.</li>
+      <li>Tap <strong>Share → Add to Home Screen</strong>. Launch via the home-screen
+        icon thereafter — standalone mode keeps permissions sticky.</li>
+      <li>Wake-lock keeps the screen on while the page is foreground.</li>
+      <li>The status dot turns green once connected. Benson can now snapshot on demand.</li>
+    </ol>
+
+    <h6 class="text-uppercase small text-warning mt-3">3. Belt-and-suspenders (only if Safari still re-prompts)</h6>
+    <ol class="small text-secondary">
+      <li><strong>Settings → Safari → Camera</strong> → <strong>Allow</strong>.</li>
+      <li>Always launch from the home-screen icon, not via Safari directly.</li>
+    </ol>
+  </div>
+</div>
+
+<div class="card bg-dark border-secondary p-3 mb-3">
+  <div class="d-flex justify-content-between align-items-baseline">
+    <h5 class="mb-0">Connected Cameras</h5>
+    <button class="btn btn-sm btn-outline-secondary" onclick="loadStatus()">↻ Refresh</button>
+  </div>
+  <div id="cams" class="row g-3 mt-2"></div>
+</div>
+
+<script>
+function fmtAge(s) {
+  if (s == null) return '—';
+  if (s < 60) return Math.round(s) + 's ago';
+  if (s < 3600) return Math.round(s/60) + 'm ago';
+  return Math.round(s/3600) + 'h ago';
+}
+
+function fmtTime(ts) {
+  return new Date(ts * 1000).toLocaleTimeString();
+}
+
+const KIND_BADGES = {
+  connected: 'bg-success',
+  disconnected: 'bg-secondary',
+  ws_error: 'bg-danger',
+  snapshot_requested: 'bg-info text-dark',
+  snapshot_delivered: 'bg-success',
+  snapshot_timeout: 'bg-warning text-dark',
+  snapshot_no_camera: 'bg-warning text-dark',
+  snapshot_send_failed: 'bg-danger',
+  frame_uploaded: 'bg-success',
+  frame_rejected: 'bg-danger',
+};
+
+function renderEvents(events) {
+  if (!events || events.length === 0) return '<div class="text-secondary small">No events yet.</div>';
+  const rows = events.slice().reverse().map(e => {
+    const klass = KIND_BADGES[e.kind] || 'bg-secondary';
+    const extra = Object.entries(e)
+      .filter(([k]) => k !== 'ts' && k !== 'kind')
+      .map(([k, v]) => `<span class="text-secondary">${k}:</span> <code>${v}</code>`)
+      .join(' · ');
+    return `<tr>
+      <td class="text-secondary small" style="white-space:nowrap">${fmtTime(e.ts)}</td>
+      <td><span class="badge ${klass}">${e.kind}</span></td>
+      <td class="small">${extra || ''}</td>
+    </tr>`;
+  }).join('');
+  return `<table class="table table-dark table-sm mb-0"><tbody>${rows}</tbody></table>`;
+}
+
+async function loadStatus() {
+  const r = await fetch('/camera/status');
+  const j = await r.json();
+  const cams = j.cameras || {};
+  const wrap = document.getElementById('cams');
+  const names = Object.keys(cams).sort();
+  if (names.length === 0) {
+    wrap.innerHTML = '<div class="col-12 text-secondary">No cameras yet. Open <code>/camera/kitchen/page</code> on an iPad.</div>';
+    return;
+  }
+  wrap.innerHTML = names.map(n => {
+    const c = cams[n];
+    const dot = c.connected
+      ? '<span class="text-success">● live</span>'
+      : '<span class="text-warning">● offline (cached)</span>';
+    const stats = c.stats || {};
+    const ua = c.user_agent ? `<div class="small text-secondary text-truncate" title="${c.user_agent}">UA: ${c.user_agent}</div>` : '';
+    return `
+      <div class="col-12 col-lg-6">
+        <div class="card bg-black border-secondary p-2">
+          <div class="d-flex justify-content-between align-items-baseline mb-1">
+            <strong>${n}</strong> ${dot}
+          </div>
+          ${ua}
+          <img src="/camera/${n}/latest.jpg?ts=${Date.now()}" class="img-fluid rounded my-1" style="max-height: 220px; object-fit: cover; width: 100%;" onerror="this.style.display='none'">
+          <div class="d-flex flex-wrap gap-2 small text-secondary mb-2">
+            <span>last frame: <strong>${fmtAge(c.last_frame_age_s)}</strong></span>
+            <span>· delivered: <strong>${stats.snapshots_delivered ?? 0}</strong></span>
+            <span>· timeouts: <strong>${stats.snapshots_timed_out ?? 0}</strong></span>
+            <span>· events: <strong>${stats.events_recorded ?? 0}</strong></span>
+          </div>
+          <div class="d-flex gap-2 mb-2">
+            <button class="btn btn-sm btn-warning" onclick="snap('${n}')">📸 Snapshot now</button>
+            <a class="btn btn-sm btn-outline-secondary" href="/camera/${n}/latest.jpg" target="_blank" hx-boost="false">View raw</a>
+            <a class="btn btn-sm btn-outline-secondary" href="/camera/${n}/page" target="_blank" hx-boost="false">Open page</a>
+          </div>
+          <details>
+            <summary class="small text-warning" style="cursor:pointer">Recent events (${(c.recent_events || []).length})</summary>
+            <div class="mt-2" style="max-height: 280px; overflow-y: auto;">
+              ${renderEvents(c.recent_events)}
+            </div>
+          </details>
+        </div>
+      </div>`;
+  }).join('');
+}
+async function snap(cam) {
+  const r = await fetch('/camera/' + cam + '/snapshot', {method:'POST'});
+  const j = await r.json();
+  if (j.ok) loadStatus();
+  else alert('snapshot failed: ' + (j.error || 'unknown'));
+}
+loadStatus();
+setInterval(loadStatus, 3000);
+</script>
+{% endblock %}

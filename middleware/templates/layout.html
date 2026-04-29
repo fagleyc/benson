@@ -1,0 +1,425 @@
+<!DOCTYPE html>
+<html lang="en" data-bs-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+  <title>{% block title %}Fagley House Hub{% endblock %}</title>
+  <link rel="stylesheet"
+    href="https://cdn.jsdelivr.net/npm/bootswatch@5.3.0/dist/darkly/bootstrap.min.css">
+  <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+
+  <!-- ─── Benson Eye: persistent hub-as-camera ──────────────────────── -->
+  <script>
+  (function(){
+    if (window.__bensonEyeInit) return;
+    window.__bensonEyeInit = true;
+
+    // Run once on first hub load. Survives hx-boost nav because we live in <head>.
+    const startEye = async () => {
+      try {
+        const stored = localStorage.getItem('benson_eye_enabled');
+        if (stored === 'no') {
+          updateDot('off', 'eye disabled');
+          return;
+        }
+        // mediaDevices is only available in a secure context (HTTPS or
+        // localhost). If the page was loaded over HTTP, gracefully bail.
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+          const why = window.isSecureContext ? 'unsupported browser' : 'needs HTTPS';
+          updateDot('off', 'eye: ' + why);
+          console.warn('benson-eye: navigator.mediaDevices unavailable (' + why + ')');
+          return;
+        }
+        const cam = (() => {
+          const room = localStorage.getItem('benson_room') || 'hub';
+          return room === 'hub' ? 'kitchen' : room;
+        })();
+        window.__bensonEyeCam = cam;
+
+        // Request both camera AND microphone in one combined prompt. The
+        // audio track isn't actively used (the chat panel's Web Speech
+        // API mic button captures separately), but having mic permission
+        // pre-granted to the origin means the mic button no longer
+        // re-prompts every time it's used.
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } },
+          audio: true,
+        });
+        // Attach to the persistent <video> in body (created by hub-eye-mount div)
+        // The video element exists because layout.html renders it with hx-preserve.
+        const v = document.getElementById('benson-cam');
+        v.srcObject = stream;
+        await v.play();
+        updateDot('ok', 'eye active');
+
+        // Wake-lock so screen stays on while in foreground
+        try { if ('wakeLock' in navigator) await navigator.wakeLock.request('screen'); } catch(e){}
+
+        // WebSocket to Benson — survives hx-boost nav (we're in window scope)
+        connectEyeWS(cam);
+      } catch (e) {
+        console.warn('benson-eye start failed:', e);
+        updateDot('bad', 'eye: ' + (e.message || 'denied'));
+      }
+    };
+
+    const updateDot = (state, label) => {
+      const dot = document.getElementById('eye-dot');
+      const txt = document.getElementById('eye-label');
+      if (!dot) return;
+      dot.style.background = state === 'ok' ? '#7fdb9b' : (state === 'snap' ? '#f7c873' : (state === 'off' ? '#666' : '#e07070'));
+      if (txt) txt.textContent = label || '';
+    };
+
+    const connectEyeWS = (cam) => {
+      const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const ws = new WebSocket(proto + '//' + location.host + '/camera/' + cam + '/ws');
+      window.__bensonEyeWS = ws;
+      let pingTimer;
+      ws.onopen = () => {
+        updateDot('ok', 'eye live · ' + cam);
+        try { ws.send('ping'); } catch(e){}
+        pingTimer = setInterval(() => { if (ws.readyState === 1) try { ws.send('ping'); } catch(e){} }, 5000);
+      };
+      ws.onmessage = (e) => {
+        if (e.data === 'snapshot') { captureAndUpload(cam); return; }
+        // Listen-in control messages are JSON
+        try {
+          const msg = JSON.parse(e.data);
+          if (msg.action === 'start_listening') startListening(msg.session_id, msg.duration_min || 90);
+          else if (msg.action === 'stop_listening') stopListening();
+        } catch(_){}
+      };
+      ws.onclose = () => {
+        clearInterval(pingTimer);
+        updateDot('bad', 'eye: reconnecting…');
+        setTimeout(() => connectEyeWS(cam), 2000);
+      };
+      ws.onerror = () => {};
+    };
+
+    const captureAndUpload = async (cam) => {
+      const v = document.getElementById('benson-cam');
+      if (!v || !v.videoWidth) return;
+      updateDot('snap', 'eye: snapping…');
+      const c = document.createElement('canvas');
+      c.width = v.videoWidth; c.height = v.videoHeight;
+      c.getContext('2d').drawImage(v, 0, 0);
+      // brief flash so anyone in the room sees the snap
+      const flash = document.getElementById('eye-flash');
+      if (flash) { flash.style.opacity = 0.35; setTimeout(()=>flash.style.opacity=0, 150); }
+      const blob = await new Promise(r => c.toBlob(r, 'image/jpeg', 0.85));
+      try {
+        const r = await fetch('/camera/' + cam + '/frame', { method:'POST', headers:{'Content-Type':'image/jpeg'}, body: blob });
+        const j = await r.json();
+        updateDot('ok', 'eye: snap ✓ ' + (j.bytes||0)+'B');
+        setTimeout(() => updateDot('ok', 'eye live · ' + cam), 1800);
+      } catch (e) { updateDot('bad', 'eye: upload failed'); }
+    };
+
+    // ─── Listen-in mode ─────────────────────────────────────────────
+    let listenRecorder = null;
+    let listenSessionId = null;
+    let listenStopTimer = null;
+
+    const startListening = (sessionId, durationMin) => {
+      const v = document.getElementById('benson-cam');
+      if (!v || !v.srcObject) {
+        console.warn('listen: no media stream');
+        return;
+      }
+      const audioTracks = v.srcObject.getAudioTracks();
+      if (!audioTracks.length) {
+        console.warn('listen: no audio track on stream');
+        return;
+      }
+      const audioStream = new MediaStream(audioTracks);
+      let mime = 'audio/webm;codecs=opus';
+      if (!MediaRecorder.isTypeSupported(mime)) mime = 'audio/mp4';
+      if (!MediaRecorder.isTypeSupported(mime)) mime = '';
+      try {
+        listenRecorder = new MediaRecorder(audioStream, mime ? { mimeType: mime } : {});
+      } catch(e) { console.warn('listen: MediaRecorder failed', e); return; }
+      listenSessionId = sessionId;
+      listenRecorder.ondataavailable = async (ev) => {
+        if (!ev.data || ev.data.size < 500) return;
+        try {
+          await fetch('/listening/chunk/' + sessionId, {
+            method: 'POST',
+            headers: { 'Content-Type': ev.data.type || 'audio/webm' },
+            body: ev.data,
+          });
+        } catch(e) { console.warn('listen chunk upload:', e); }
+      };
+      listenRecorder.start(15000); // emit a chunk every 15 seconds
+      setListenIndicator(true, durationMin);
+      // Hard local stop after duration_min + 30s grace
+      listenStopTimer = setTimeout(() => stopListening(), (durationMin * 60 + 30) * 1000);
+    };
+
+    const stopListening = () => {
+      if (listenRecorder && listenRecorder.state === 'recording') {
+        try { listenRecorder.stop(); } catch(_){}
+      }
+      listenRecorder = null;
+      listenSessionId = null;
+      if (listenStopTimer) { clearTimeout(listenStopTimer); listenStopTimer = null; }
+      setListenIndicator(false, 0);
+    };
+
+    const setListenIndicator = (on, durationMin) => {
+      let bar = document.getElementById('listen-bar');
+      if (!bar) {
+        bar = document.createElement('div');
+        bar.id = 'listen-bar';
+        bar.style.cssText = 'position:fixed;top:0;left:0;right:0;padding:10px 20px;background:#a02828;color:#fff;font-weight:600;z-index:10000;text-align:center;font-size:1rem;display:none;letter-spacing:0.04em';
+        document.body.appendChild(bar);
+      }
+      if (on) {
+        bar.innerHTML = '🎙️ <strong>BENSON IS LISTENING</strong> · capturing dinner audio for memory enrichment · <button onclick="window.bensonStopListen && window.bensonStopListen()" style="background:#fff;color:#a02828;border:none;padding:3px 10px;border-radius:4px;cursor:pointer;font-weight:700;margin-left:8px">Stop</button>';
+        bar.style.display = 'block';
+      } else {
+        bar.style.display = 'none';
+      }
+    };
+
+    window.bensonStopListen = async () => {
+      if (!listenSessionId) { stopListening(); return; }
+      try { await fetch('/listening/stop/' + listenSessionId, { method: 'POST' }); } catch(_){}
+      stopListening();
+    };
+
+    // Toggle handler — exposed globally for the navbar button
+    window.bensonEyeToggle = () => {
+      const cur = localStorage.getItem('benson_eye_enabled') !== 'no';
+      if (cur) {
+        localStorage.setItem('benson_eye_enabled', 'no');
+        if (window.__bensonEyeWS) try { window.__bensonEyeWS.close(); } catch(e){}
+        const v = document.getElementById('benson-cam');
+        if (v && v.srcObject) v.srcObject.getTracks().forEach(t => t.stop());
+        updateDot('off', 'eye disabled');
+      } else {
+        localStorage.setItem('benson_eye_enabled', 'yes');
+        startEye();
+      }
+    };
+
+    // Boot once DOM is ready
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', startEye, { once: true });
+    } else {
+      startEye();
+    }
+  })();
+  </script>
+  <style>
+    body { font-size: 1.05rem; }
+    .nav-link.active { background: rgba(255,255,255,0.06); border-radius: .25rem; }
+    .recipe-card { transition: transform .12s ease-in-out; }
+    .recipe-card:hover { transform: translateY(-2px); }
+    .chat-bubble-user { background: #375a7f; color: #fff; border-radius: 1rem 1rem .25rem 1rem; padding: .5rem .75rem; max-width: 85%; margin-left: auto; }
+    .chat-bubble-benson { background: #2a3742; color: #fff; border-radius: 1rem 1rem 1rem .25rem; padding: .5rem .75rem; max-width: 85%; }
+    .chat-meta { font-size: .75rem; color: #888; }
+    #chat-log { max-height: 60vh; overflow-y: auto; }
+    .chat-fab {
+      position: fixed; bottom: 1.25rem; right: 1.25rem;
+      width: 60px; height: 60px; border-radius: 50%;
+      background: #f39c12; color: #1a1a1a; font-size: 1.6rem;
+      display: flex; align-items: center; justify-content: center;
+      cursor: pointer; z-index: 1050; border: none;
+      box-shadow: 0 4px 14px rgba(0,0,0,0.4);
+    }
+    .chat-panel {
+      position: fixed; bottom: 5.25rem; right: 1.25rem;
+      width: min(420px, calc(100vw - 2rem)); height: min(560px, 70vh);
+      background: #222; border: 1px solid #444; border-radius: .75rem;
+      display: none; flex-direction: column; z-index: 1050;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+    }
+    .chat-panel.open { display: flex; }
+    .chat-header { padding: .6rem .9rem; border-bottom: 1px solid #444; display: flex; justify-content: space-between; align-items: center; }
+    .chat-input { padding: .6rem; border-top: 1px solid #444; }
+    .htmx-indicator { display: none; }
+    .htmx-request .htmx-indicator { display: inline; }
+    .htmx-request.htmx-indicator { display: inline; }
+  </style>
+</head>
+<body hx-boost="true">
+
+<!-- ─── Benson Eye: persistent video element + flash overlay ──────── -->
+<div id="benson-eye-mount" hx-preserve="true" style="position: fixed; width: 1px; height: 1px; overflow: hidden; opacity: 0; pointer-events: none; z-index: -1;">
+  <video id="benson-cam" autoplay playsinline muted></video>
+</div>
+<div id="eye-flash" hx-preserve="true" style="position: fixed; inset: 0; background: white; opacity: 0; pointer-events: none; z-index: 9999; transition: opacity 80ms;"></div>
+
+<nav class="navbar navbar-expand-lg navbar-dark bg-dark border-bottom border-secondary">
+  <div class="container-fluid">
+    <a class="navbar-brand fw-bold" href="/">
+      <span style="color:#f39c12">●</span> Fagley House Hub
+    </a>
+    <button class="navbar-toggler" type="button"
+            data-bs-toggle="collapse" data-bs-target="#mainNav">
+      <span class="navbar-toggler-icon"></span>
+    </button>
+    <div class="collapse navbar-collapse" id="mainNav">
+      <ul class="navbar-nav me-auto">
+        <li class="nav-item"><a class="nav-link {% if active=='home' %}active{% endif %}" href="/">Home</a></li>
+        <li class="nav-item"><a class="nav-link {% if active=='chat' %}active{% endif %}" href="/chat"><strong style="color:#f39c12">💬 Chat</strong></a></li>
+        <li class="nav-item"><a class="nav-link {% if active=='recipes' %}active{% endif %}" href="/recipes">Recipes</a></li>
+        <li class="nav-item"><a class="nav-link {% if active=='weekly' %}active{% endif %}" href="/weekly">Weekly Menu</a></li>
+        <li class="nav-item"><a class="nav-link {% if active=='chores' %}active{% endif %}" href="/chores">Chores</a></li>
+        <li class="nav-item"><a class="nav-link {% if active=='music' %}active{% endif %}" href="/music">🎵 Music</a></li>
+        <li class="nav-item"><a class="nav-link {% if active=='advanced' %}active{% endif %}" href="/advanced">Advanced</a></li>
+      </ul>
+      <span class="navbar-text small text-secondary d-flex align-items-center gap-2">
+        <span style="cursor:pointer" onclick="window.bensonEyeToggle && window.bensonEyeToggle()" title="Toggle Benson Eye">
+          <span id="eye-dot" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#666;"></span>
+          <span id="eye-label" class="ms-1">eye init…</span>
+        </span>
+        <span class="text-secondary">·</span>
+        Benson · {{ now }}
+      </span>
+    </div>
+  </div>
+</nav>
+
+<main class="container-fluid mt-3 mb-5 pb-5">
+  {% block content %}{% endblock %}
+</main>
+
+<!-- ─── Talk to Benson floating widget ─── -->
+<button class="chat-fab" id="chatFab" title="Talk to Benson" onclick="
+  document.getElementById('chatPanel').classList.toggle('open');
+  this.style.display = document.getElementById('chatPanel').classList.contains('open') ? 'none' : 'flex';
+">💬</button>
+
+<div class="chat-panel" id="chatPanel">
+  <div class="chat-header">
+    <strong>Talk to Benson</strong>
+    <button class="btn btn-sm btn-outline-secondary" onclick="
+      document.getElementById('chatPanel').classList.remove('open');
+      document.getElementById('chatFab').style.display = 'flex';
+    ">×</button>
+  </div>
+  <div class="px-2 pt-2 pb-1 small d-flex gap-2 align-items-center" style="background:#1a2128;border-bottom:1px solid #444;">
+    <span class="text-secondary">I am</span>
+    <select class="form-select form-select-sm benson-speaker-select" style="width:auto;">
+      <option value="Casey">Casey</option>
+      <option value="Lindsey">Lindsey</option>
+      <option value="Cole">Cole</option>
+      <option value="Zander">Zander</option>
+      <option value="Sherry">Sherry</option>
+      <option value="Guest">Guest</option>
+    </select>
+    <span class="text-secondary">in</span>
+    <select class="form-select form-select-sm benson-room-select" style="width:auto;">
+      <option value="hub">anywhere (hub)</option>
+      <option value="kitchen">Kitchen</option>
+      <option value="family_room">Family Room</option>
+      <option value="tv_room">TV Room</option>
+      <option value="master_bedroom">Master Bedroom</option>
+      <option value="coles_room">Cole's Room</option>
+      <option value="zanders_room">Zander's Room</option>
+      <option value="office">Office</option>
+      <option value="patio">Patio / Deck</option>
+    </select>
+  </div>
+  <div id="chat-log" class="flex-grow-1 p-2"></div>
+  <form class="chat-input benson-chat-form" hx-post="/hub/chat"
+        hx-target="#chat-log" hx-swap="beforeend"
+        hx-on::after-request="this.querySelector('input[name=text]').value=''; this.querySelector('input[name=voice_input]').value=''; document.getElementById('chat-log').scrollTop = 9e9;">
+    <input type="hidden" name="speaker" value="Casey">
+    <input type="hidden" name="room" value="hub">
+    <input type="hidden" name="voice_input" value="">
+    <div class="input-group">
+      <button type="button" class="btn btn-outline-warning benson-mic-btn" title="Press and hold to talk">🎙️</button>
+      <input type="text" name="text" class="form-control"
+             placeholder="Ask Benson anything…" autocomplete="off" required>
+      <button class="btn btn-warning" type="submit">
+        Send <span class="htmx-indicator">…</span>
+      </button>
+    </div>
+  </form>
+</div>
+
+<script>
+(function(){
+  // ─── Persist speaker/room selection in localStorage ───────────────
+  const speakerSel = document.querySelector('.benson-speaker-select');
+  const roomSel = document.querySelector('.benson-room-select');
+  if (speakerSel) {
+    speakerSel.value = localStorage.getItem('benson_speaker') || 'Casey';
+    speakerSel.addEventListener('change', () => {
+      localStorage.setItem('benson_speaker', speakerSel.value);
+      syncHidden();
+    });
+  }
+  if (roomSel) {
+    roomSel.value = localStorage.getItem('benson_room') || 'hub';
+    roomSel.addEventListener('change', () => {
+      localStorage.setItem('benson_room', roomSel.value);
+      syncHidden();
+    });
+  }
+  function syncHidden() {
+    document.querySelectorAll('.benson-chat-form').forEach(f => {
+      const sp = f.querySelector('input[name=speaker]');
+      const rm = f.querySelector('input[name=room]');
+      if (sp) sp.value = speakerSel ? speakerSel.value : 'Casey';
+      if (rm) rm.value = roomSel ? roomSel.value : 'hub';
+    });
+  }
+  syncHidden();
+
+  // ─── Web Speech API mic button ────────────────────────────────────
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const micBtns = document.querySelectorAll('.benson-mic-btn');
+  if (!SR) {
+    micBtns.forEach(b => { b.disabled = true; b.title = 'Speech recognition not available in this browser'; });
+  } else {
+    micBtns.forEach(btn => {
+      let rec = null;
+      let listening = false;
+      btn.addEventListener('click', () => {
+        if (listening) { rec.stop(); return; }
+        rec = new SR();
+        rec.lang = 'en-US';
+        rec.interimResults = false;
+        rec.maxAlternatives = 1;
+        rec.continuous = false;
+        const form = btn.closest('form');
+        const textInput = form.querySelector('input[name=text]');
+        const voiceFlag = form.querySelector('input[name=voice_input]');
+        rec.onstart = () => {
+          listening = true;
+          btn.classList.add('btn-danger'); btn.classList.remove('btn-outline-warning');
+          btn.textContent = '● rec';
+        };
+        rec.onresult = (e) => {
+          const txt = e.results[0][0].transcript.trim();
+          textInput.value = txt;
+          voiceFlag.value = '1';
+          // Submit immediately
+          if (typeof htmx !== 'undefined') {
+            htmx.trigger(form, 'submit');
+          } else {
+            form.submit();
+          }
+        };
+        rec.onerror = (e) => { console.warn('SR error', e); };
+        rec.onend = () => {
+          listening = false;
+          btn.classList.add('btn-outline-warning'); btn.classList.remove('btn-danger');
+          btn.textContent = '🎙️';
+        };
+        rec.start();
+      });
+    });
+  }
+})();
+</script>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+{% block scripts %}{% endblock %}
+</body>
+</html>

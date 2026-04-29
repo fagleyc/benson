@@ -1,0 +1,77 @@
+{% extends "layout.html" %}
+{% block title %}Weekly Menu — Fagley House Hub{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-baseline mb-3">
+  <h2 class="mb-0">Weekly Menu</h2>
+  <div class="text-secondary small">Today + next 6 days · changes save on selection</div>
+</div>
+
+<div class="card bg-dark border-secondary p-2">
+  <table class="table table-dark mb-0">
+    <thead>
+      <tr>
+        <th style="width: 8rem">Day</th>
+        <th>Recipe</th>
+        <th style="width: 7rem">Status</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for d in plan %}
+        <tr>
+          <td>
+            <strong>{{ d.plan_date.strftime('%a') }}</strong>
+            <span class="text-secondary ms-1">{{ d.plan_date.strftime('%m/%d') }}</span>
+          </td>
+          <td>
+            <select class="form-select form-select-sm bg-dark text-light border-secondary"
+                    data-date="{{ d.plan_date.isoformat() }}"
+                    onchange="setMeal(this)">
+              <option value="leftover" {% if not d.recipe_id %}selected{% endif %}>— Leftover —</option>
+              {% for r in recipes %}
+                <option value="{{ r.id }}" {% if d.recipe_id == r.id %}selected{% endif %}>
+                  {{ r.title }}{% if r.course %} · {{ r.course }}{% endif %}
+                </option>
+              {% endfor %}
+            </select>
+          </td>
+          <td>
+            {% if d.recipe_id %}
+              <a href="/recipes/{{ d.recipe_id }}" class="badge bg-warning text-dark text-decoration-none">View</a>
+            {% else %}
+              <span class="badge bg-secondary">Open</span>
+            {% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<p class="text-secondary small mt-3">
+  Tip: ask Benson "plan a week of dinners using what we have" — he'll multi-constraint plan and update this page automatically.
+</p>
+
+<script>
+async function setMeal(sel) {
+  const date = sel.dataset.date;
+  const value = sel.value;
+  const body = value === 'leftover' ? {recipe_id: null, status: 'leftover'} : {recipe_id: parseInt(value, 10)};
+  sel.disabled = true;
+  try {
+    const r = await fetch('/api/weekly/' + date + '/set', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body),
+    });
+    if (!r.ok) throw new Error(await r.text());
+    // Brief flash to confirm save
+    sel.style.borderColor = '#7fdb9b';
+    setTimeout(() => { sel.style.borderColor = ''; location.reload(); }, 400);
+  } catch (e) {
+    alert('save failed: ' + e.message);
+  } finally {
+    sel.disabled = false;
+  }
+}
+</script>
+{% endblock %}

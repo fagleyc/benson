@@ -1,0 +1,30 @@
+{% extends "layout.html" %}
+{% block title %}What Benson Knows — Fagley House Hub{% endblock %}
+{% block content %}
+<h2 class="mb-3">What Benson Knows</h2>
+<p class="text-secondary">
+  Memories Benson holds about the household. Seed memories were loaded
+  at install; <code>auto</code> memories are extracted from
+  conversations as they happen.
+</p>
+
+<div class="list-group">
+  {% for m in memories %}
+    <div class="list-group-item bg-dark border-secondary text-light">
+      <div class="d-flex justify-content-between mb-1">
+        <small class="text-secondary">
+          {{ m.created_at.strftime('%Y-%m-%d %H:%M') if m.created_at else '' }}
+          {% if m.speaker %} · {{ m.speaker }}{% endif %}
+          {% if m.room %} · {{ m.room }}{% endif %}
+        </small>
+        <span class="badge {% if m.source == 'seed' %}bg-info{% elif m.source == 'auto' %}bg-success{% else %}bg-secondary{% endif %}">
+          {{ m.source }}
+        </span>
+      </div>
+      <div>{{ m.content }}</div>
+    </div>
+  {% else %}
+    <p class="text-secondary">No memories yet.</p>
+  {% endfor %}
+</div>
+{% endblock %}

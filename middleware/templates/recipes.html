@@ -1,0 +1,42 @@
+{% extends "layout.html" %}
+{% block title %}Recipes — Fagley House Hub{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h2 class="mb-0">Recipes <span class="badge bg-secondary">{{ recipes|length }}</span></h2>
+  <form class="d-flex" method="get" action="/recipes">
+    <input class="form-control form-control-sm me-2" type="search" name="q"
+           placeholder="search title…" value="{{ q or '' }}">
+    <select class="form-select form-select-sm me-2" name="course" onchange="this.form.submit()">
+      <option value="">All courses</option>
+      {% for c in courses %}
+        <option value="{{ c }}" {% if c == course %}selected{% endif %}>{{ c }}</option>
+      {% endfor %}
+    </select>
+    <button class="btn btn-sm btn-warning">Search</button>
+  </form>
+</div>
+
+<div class="row row-cols-1 row-cols-md-2 row-cols-lg-3 g-3">
+  {% for r in recipes %}
+    <div class="col">
+      <a href="/recipes/{{ r.id }}" class="text-decoration-none text-light">
+        <div class="card bg-dark border-secondary recipe-card h-100">
+          {% if r.image_url %}
+            <img src="{{ r.image_url }}" class="card-img-top" style="height:160px;object-fit:cover" alt="">
+          {% endif %}
+          <div class="card-body">
+            <h6 class="card-title mb-1">{{ r.title }}</h6>
+            <p class="card-text small text-secondary mb-0">
+              {% if r.course %}{{ r.course }}{% endif %}
+              {% if r.prep_time %} · {{ r.prep_time }} min{% endif %}
+              {% if r.user_rating %} · ⭐ {{ r.user_rating }}{% endif %}
+            </p>
+          </div>
+        </div>
+      </a>
+    </div>
+  {% else %}
+    <div class="col-12"><p class="text-secondary">No recipes match.</p></div>
+  {% endfor %}
+</div>
+{% endblock %}

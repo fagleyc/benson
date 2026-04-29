@@ -1,0 +1,97 @@
+{% extends "layout.html" %}
+{% block title %}Trust Benson on iPad — Fagley House Hub{% endblock %}
+{% block content %}
+<a href="/advanced" class="text-secondary">← Advanced</a>
+<h2 class="mt-3 mb-3">Trust Benson's HTTPS on iPad / iPhone / Mac</h2>
+
+<p class="text-secondary">
+  Caddy uses an internal certificate authority for HTTPS on the LAN. iOS and macOS
+  don't trust it by default — that's the "Not Secure" warning, and it's also why
+  Safari keeps re-prompting for camera permissions every session. Install this
+  cert as a trusted root and both problems go away.
+</p>
+
+<hr>
+
+<h4>iPad / iPhone (one-time, ~2 min)</h4>
+<ol>
+  <li><strong>On the device</strong>, open Safari and tap this link:
+    <p class="mt-2">
+      <a href="/cert/benson-caddy-root.crt" hx-boost="false" class="btn btn-warning btn-lg">
+        ⬇️ Download <code>benson-caddy-root.crt</code>
+      </a>
+    </p>
+  </li>
+  <li>Safari pops up "This website is trying to download a configuration profile" → tap <strong>Allow</strong>.</li>
+  <li>Open <strong>Settings</strong> → "Profile Downloaded" appears at the top → tap it.</li>
+  <li>Tap <strong>Install</strong> (top right) → enter passcode → <strong>Install</strong> → <strong>Install</strong> again → <strong>Done</strong>.</li>
+  <li>Now go to <strong>Settings → General → About → Certificate Trust Settings</strong>.</li>
+  <li>Toggle <strong>Caddy Local Authority</strong> (or similar) <strong>ON</strong> and tap <strong>Continue</strong>.</li>
+</ol>
+
+<p>
+  <strong>That's it.</strong> Reload <code>https://192.168.0.240</code> — no more
+  "Not Secure" warning, and Safari will now <em>persist</em> camera/mic
+  permissions on the Benson Eye page across restarts.
+</p>
+
+<hr>
+
+<h4>macOS</h4>
+<ol>
+  <li>Download the cert with the link above.</li>
+  <li>Open the downloaded <code>benson-caddy-root.crt</code> with Keychain Access (Mac will offer this automatically, or right-click → Open With → Keychain Access).</li>
+  <li>It lands in the <strong>login</strong> keychain. Find <strong>Caddy Local Authority</strong>, double-click it.</li>
+  <li>Expand <strong>Trust</strong>, set "When using this certificate" to <strong>Always Trust</strong>.</li>
+  <li>Close the window — macOS prompts for your password to confirm.</li>
+</ol>
+
+<hr>
+
+<h4>Windows 10 / 11</h4>
+<p class="text-secondary small mb-2">
+  Trusts the cert system-wide so Chrome, Edge, and Outlook all stop warning. (Firefox uses its own store — see below.)
+</p>
+<ol>
+  <li>On the Windows machine, click this link to download:
+    <p class="mt-2">
+      <a href="/cert/benson-caddy-root.crt" hx-boost="false" class="btn btn-warning">⬇️ Download <code>benson-caddy-root.crt</code></a>
+    </p>
+  </li>
+  <li>In File Explorer, find the downloaded <code>benson-caddy-root.crt</code> → <strong>right-click → Install Certificate</strong>.</li>
+  <li>Choose <strong>Local Machine</strong> (requires admin — best for the whole computer) or <strong>Current User</strong> (no admin, just your account) → <strong>Next</strong>.</li>
+  <li>Select <strong>Place all certificates in the following store</strong> → <strong>Browse</strong> → pick <strong>Trusted Root Certification Authorities</strong> → <strong>OK</strong> → <strong>Next</strong>.</li>
+  <li><strong>Finish</strong>. UAC may prompt — accept. You'll see "The import was successful."</li>
+  <li>Close and reopen any browser tab pointed at <code>https://192.168.0.240</code> — the lock icon is now clean.</li>
+</ol>
+
+<p class="text-secondary small mb-2">
+  <strong>Firefox extra step</strong> (it ignores the system store): in Firefox open
+  <code>about:preferences#privacy</code> → scroll to <strong>Certificates</strong> → <strong>View Certificates</strong>
+  → <strong>Authorities</strong> tab → <strong>Import</strong> → pick <code>benson-caddy-root.crt</code> →
+  check <strong>Trust this CA to identify websites</strong> → <strong>OK</strong>.
+</p>
+
+<p class="text-secondary small mb-2">
+  <strong>PowerShell shortcut</strong> (admin) — same effect as the GUI install for the local machine:
+</p>
+<pre class="small p-2" style="background:#0f1419;border-radius:6px;overflow-x:auto"><code>Import-Certificate -FilePath "$env:USERPROFILE\Downloads\benson-caddy-root.crt" `
+  -CertStoreLocation Cert:\LocalMachine\Root</code></pre>
+
+<hr>
+
+<h4>Belt and suspenders for the iPad camera page</h4>
+<p class="text-secondary small mb-2">After the cert is trusted, if Safari is <em>still</em> re-prompting for camera permission:</p>
+<ol class="small text-secondary">
+  <li>Open <strong>Settings → Safari → Camera</strong> → set to <strong>Allow</strong> for "Websites I Visit" or specifically for <code>192.168.0.240</code>.</li>
+  <li>On the iPad, open Safari to the camera page, then tap <strong>Share → Add to Home Screen</strong>. The Home Screen launcher uses standalone mode and gets stickier permissions.</li>
+  <li>Launch via the home-screen icon (not Safari directly). Permissions persist there much better.</li>
+</ol>
+
+<hr>
+
+<p class="text-secondary small mb-0">
+  The cert file is also available at <code>/opt/benson/middleware/static/benson-caddy-root.crt</code> on the Spark
+  if you'd rather AirDrop it from a Mac to the iPad.
+</p>
+{% endblock %}
