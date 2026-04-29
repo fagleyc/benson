@@ -222,30 +222,35 @@ async def grep_my_source(pattern: str, path_glob: str = "**/*.py", max_results: 
     }
 
 
-_LOCAL_FILE_PREFIX = "/tmp/benson-"
+_LOCAL_FILE_PREFIXES = (
+    "/tmp/benson-",
+    "/home/casey/Benson/",
+)
 
 
 async def write_local_file(path: str, content: str, append: bool = False) -> dict:
-    """Write a file under /tmp/benson-*. Use this when the household
-    asks you to save logs, notes, debug captures, etc. — instead of
-    claiming you saved a file you can't actually save.
+    """Write a file under /tmp/benson-* or /home/casey/Benson/*. Use this when
+    the household asks you to save logs, notes, debug captures, images, documents,
+    etc. — instead of claiming you saved a file you can't actually save.
 
-    Path-locked to /tmp/benson-* by design (anything else is refused);
-    real source edits go through propose_change.
+    Path-locked to /tmp/benson-* or /home/casey/Benson/* (anything else is
+    refused); real source edits go through propose_change.
     """
-    if not path.startswith(_LOCAL_FILE_PREFIX):
+    if not any(path.startswith(pfx) for pfx in _LOCAL_FILE_PREFIXES):
+        allowed = " or ".join(f"'{p}'" for p in _LOCAL_FILE_PREFIXES)
         return {
             "ok": False,
-            "error": f"path must start with '{_LOCAL_FILE_PREFIX}' (got {path!r})",
+            "error": f"path must start with {allowed} (got {path!r})",
         }
     if len(content) > 1_000_000:
         return {"ok": False, "error": f"content too large ({len(content)} bytes); cap is 1MB"}
     p = Path(path)
     try:
-        # Resolve and re-check — defends against /tmp/benson-../etc/passwd tricks.
+        # Resolve and re-check — defends against path traversal tricks
+        # (e.g. /tmp/benson-../etc/passwd or /home/casey/Benson/../../root).
         resolved = p.resolve()
-        if not str(resolved).startswith(_LOCAL_FILE_PREFIX):
-            return {"ok": False, "error": f"resolved path escapes /tmp/benson-*: {resolved}"}
+        if not any(str(resolved).startswith(pfx) for pfx in _LOCAL_FILE_PREFIXES):
+            return {"ok": False, "error": f"resolved path escapes allowed prefixes: {resolved}"}
         # If the prefix is followed by a /, the parent must exist or we create it.
         # If the prefix is followed by other characters (e.g. /tmp/benson-foo.log),
         # the parent is /tmp which already exists.
