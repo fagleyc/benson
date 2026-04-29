@@ -57,9 +57,10 @@ class ModelChoice:
 
 # ─── Pattern catalogues ──────────────────────────────────────────────────
 # OPUS triggers — multi-constraint, multi-step, high-stakes deliberation.
+_DET = r"(?:the\s+|a\s+|an\s+|my\s+|our\s+|this\s+|next\s+)?"
 _OPUS_PATTERNS = re.compile(
     r"\b("
-    r"plan\s+(?:meals?|dinners?|breakfasts?|lunches?|the\s+week|a\s+week)|"
+    rf"plan\s+{_DET}(?:meals?|dinners?|breakfasts?|lunches?|menus?|week)|"
     r"meal\s*plan|"
     r"week\s+of\s+(?:dinners?|meals?|menus?)|"
     r"refinanc(?:e|ing)|"
@@ -69,7 +70,8 @@ _OPUS_PATTERNS = re.compile(
     r"research\s+the\s+best|"
     r"deep\s+(?:think|analysis|dive)|"
     r"long[\-\s]term\s+(?:strategy|plan)|"
-    r"trade[\-\s]offs?\s+between"
+    r"trade[\-\s]offs?\s+between|"
+    r"design\s+(?:the|a|an?|our|my)\s+(?:architecture|system|approach|strategy)"
     r")\b",
     re.IGNORECASE,
 )
@@ -77,13 +79,33 @@ _OPUS_PATTERNS = re.compile(
 # SONNET triggers — single-step but needs reasoning, structure, drafts, code.
 _SONNET_PATTERNS = re.compile(
     r"\b("
+    # Drafting / writing
     r"draft\s+(?:an?\s+)?(?:email|letter|memo|message|note|report)|"
     r"write\s+(?:python|code|a\s+function|a\s+script|an?\s+email|a\s+story|the\s+code)|"
+    # Explanation / analysis
     r"explain\s+in\s+detail|explain\s+thoroughly|deep\s+dive|"
     r"compare\s+\w+\s+and\s+\w+|"
     r"summari[sz]e\s+(?:this|the\s+following|the\s+article|the\s+paper)|"
     r"analy[sz]e|"
-    r"review\s+(?:my|this|the)\s+(?:code|writing|paper|draft)"
+    r"review\s+(?:my|this|the)\s+(?:code|writing|paper|draft)|"
+    # Diagnostic / why-did / what-went-wrong — these are where Haiku
+    # produced confidently-wrong answers in production. Routing them to
+    # Sonnet so the investigation actually grounds in source/logs.
+    r"why\s+(?:did|does|is|isn'?t|can'?t|won'?t)|"
+    r"what\s+(?:went\s+wrong|happened|broke|failed|caused)|"
+    r"diagnose|debug|troubleshoot|investigate|"
+    r"how\s+come|how\s+do(?:es)?\s+(?:this|that|it)\s+work|"
+    # Self-modification / fix this / propose a change
+    r"fix\s+(?:the|this|that|your|my|the\s+\w+)|"
+    r"broken|isn'?t\s+working|not\s+working|stopped\s+working|doesn'?t\s+work|"
+    r"propose\s+(?:a\s+)?change|open\s+a\s+proposal|"
+    r"refactor|rewrite|improve\s+(?:the|your)\s+(?:code|implementation)|"
+    # Multi-tool orchestration cues — when the user wants Benson to
+    # compose tools (vision + signal, grep + propose, etc.) Haiku tends
+    # to skip steps. Match 'send' and an attachment-like noun nearby.
+    r"send\s+(?:\w+\s+){0,4}(?:image|photo|file|attachment|screenshot|picture|snapshot)|"
+    r"attach\s+(?:an?|the|my)\s+(?:image|photo|file|screenshot|picture)|"
+    r"(?:read|grep|search)\s+(?:your|the|my)\s+(?:source|code|logs|history)"
     r")\b",
     re.IGNORECASE,
 )

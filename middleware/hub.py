@@ -249,7 +249,7 @@ async def status_page(request: Request):
             "memories": mem["count"],
         },
         "secrets": {
-            "anthropic": bool(os.environ.get("ANTHROPIC_API_KEY")),
+            "oauth_credentials": (Path.home() / ".claude" / ".credentials.json").exists(),
             "ha_token": bool(os.environ.get("HA_LONG_LIVED_TOKEN")),
             "bond_token": bool(os.environ.get("BOND_BRIDGE_TOKEN")),
             "telegram_token": bool(os.environ.get("TELEGRAM_BOT_TOKEN")),

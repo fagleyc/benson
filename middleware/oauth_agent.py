@@ -31,7 +31,6 @@ from claude_agent_sdk import (
 
 from agent_session import IDLE_TIMEOUT_MIN, SESSIONS_DIR, lock_for, _make_id
 from benson_mcp import ALLOWED_TOOL_NAMES, SERVER
-from claude_api import ask as ask_claude_api
 from claude_models import ModelTier, select as select_model
 
 logger = logging.getLogger("benson.oauth_agent")

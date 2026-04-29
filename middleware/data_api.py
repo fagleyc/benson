@@ -853,7 +853,7 @@ async def system_status() -> dict[str, Any]:
             "memories": mem_count,
         },
         "secrets": {
-            "anthropic": bool(os.environ.get("ANTHROPIC_API_KEY")),
+            "oauth_credentials": (_Path.home() / ".claude" / ".credentials.json").exists(),
             "ha_token": bool(os.environ.get("HA_LONG_LIVED_TOKEN")),
             "bond_token": bool(os.environ.get("BOND_BRIDGE_TOKEN")),
             "telegram_token": bool(os.environ.get("TELEGRAM_BOT_TOKEN")),

@@ -47,8 +47,10 @@ TELEGRAM_ALLOWED_CHAT_IDS: set[int] = (
     {int(x) for x in _chat_ids_raw.split(",") if x.strip()} if _chat_ids_raw else set()
 )
 
-# ─── Anthropic API key (for vision and CLI) ────────────────────────────
-ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
+# Anthropic API key removed 2026-04-29: all Claude calls now go through
+# the OAuth subscription quota via Casey's ~/.claude/.credentials.json,
+# which the bundled Claude Code CLI reads directly. ANTHROPIC_API_KEY in
+# the env caused the CLI to silently prefer the API and bill per-token.
 
 # ─── Logging ───────────────────────────────────────────────────────────
 def configure_logging(level: int = logging.INFO) -> None:

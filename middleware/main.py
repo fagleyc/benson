@@ -19,7 +19,6 @@ from fastapi import FastAPI, HTTPException, Request
 
 import agent_session
 from oauth_agent import run_agent
-from claude_api import ask as ask_claude
 from claude_models import ModelTier, select as select_model
 from config import PROMPT_PATH, configure_logging
 from data_api import router as data_router
@@ -169,8 +168,6 @@ async def handle_conversation(request: Request) -> dict[str, Any]:
     try:
         # Auto-extraction disabled 2026-04-26 — replaced by file-based memory
         # tools (memory_list/read/write/append) that the agent curates itself.
-        # Legacy MemoryStore code retained for revert path.
-        # await memory.extract_and_store(user_text, response, speaker, room)
         pass
     except Exception as e:
         logger.warning(f"Memory extraction skipped: {e}")
