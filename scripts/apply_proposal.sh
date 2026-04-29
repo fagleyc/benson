@@ -56,25 +56,38 @@ if ! find /opt/benson/middleware -maxdepth 2 -name '*.py' -not -path '*/venv/*' 
     exit 6
 fi
 
-# Restart benson. The sudoers carveout limits this to exactly this command.
-echo "[apply] restarting benson.service"
-if ! sudo -n /bin/systemctl restart benson.service; then
-    echo "[apply] systemctl restart failed — rolling back" >&2
-    git reset --hard "$PRE_SHA"
-    sudo -n /bin/systemctl restart benson.service || true
-    exit 7
-fi
-
-# Wait a few seconds and confirm it came up.
-sleep 4
-if ! sudo -n /bin/systemctl is-active --quiet benson.service; then
-    echo "[apply] service is not active after restart — rolling back" >&2
-    git reset --hard "$PRE_SHA"
-    sudo -n /bin/systemctl restart benson.service || true
-    exit 8
-fi
-
 # Delete the proposal branch — it's been merged.
 git branch -d "$BRANCH" >/dev/null 2>&1 || true
 
-echo "[apply] OK: $BRANCH merged to $POST_SHA, benson restarted"
+# Restart benson. We can't `systemctl restart` directly here because this
+# script was invoked as a subprocess of benson — the restart would SIGTERM
+# our own parent before we finish. Detach via setsid + background, with a
+# 2s delay so the response (this stdout) reaches the caller first.
+#
+# Rollback safety net: a separate watcher (scripts/benson_watchdog.sh)
+# spawned in the same detached chain checks 8s after restart whether
+# benson came up healthy, and if not reverts main to the pre-merge SHA
+# and restarts again.
+echo "[apply] OK: $BRANCH merged to $POST_SHA — restarting (detached)"
+
+PRE_SHA_FILE="/tmp/benson-apply-${POST_SHA}.presha"
+echo "$PRE_SHA" > "$PRE_SHA_FILE"
+
+setsid bash -c "
+    sleep 2
+    sudo -n /bin/systemctl restart benson.service
+    sleep 8
+    if ! sudo -n /bin/systemctl is-active --quiet benson.service; then
+        cd /opt/benson
+        git reset --hard \"$PRE_SHA\" >/dev/null 2>&1
+        sudo -n /bin/systemctl restart benson.service
+        echo \"[watchdog] benson failed to come up — rolled back to $PRE_SHA\" \
+            | systemd-cat -t benson-apply -p err
+    else
+        echo \"[watchdog] benson healthy on $POST_SHA\" \
+            | systemd-cat -t benson-apply -p info
+    fi
+    rm -f \"$PRE_SHA_FILE\"
+" </dev/null >/dev/null 2>&1 &
+
+exit 0
