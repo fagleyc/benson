@@ -33,11 +33,20 @@ async def ask(
     timeout_s: float = 60.0,
 ) -> str:
     """Single-turn OAuth call. Returns the assistant text or '' on failure."""
+    stderr_buf: list[str] = []
+
+    def _stderr_cb(line: str) -> None:
+        s = line.rstrip()
+        if s:
+            stderr_buf.append(s)
+            logger.warning(f"[oneshot-stderr] {s}")
+
     options = ClaudeAgentOptions(
         system_prompt=system_prompt or None,
         model=model,
         max_turns=1,
         permission_mode="bypassPermissions",
+        stderr=_stderr_cb,
     )
     text_parts: list[str] = []
 
@@ -54,7 +63,10 @@ async def ask(
         logger.warning(f"oauth_oneshot timed out after {timeout_s}s")
         return ""
     except Exception as e:
-        logger.warning(f"oauth_oneshot failed: {type(e).__name__}: {e}")
+        tail = "\n".join(stderr_buf[-20:]) if stderr_buf else "(empty)"
+        logger.warning(
+            f"oauth_oneshot failed: {type(e).__name__}: {e}; stderr-tail: {tail}"
+        )
         return ""
 
     return "\n".join(text_parts).strip()
@@ -72,11 +84,20 @@ async def ask_with_image(
     after the Read tool turn — intermediate 'let me look' narration is
     dropped automatically by keeping only the last AssistantMessage).
     """
+    stderr_buf: list[str] = []
+
+    def _stderr_cb(line: str) -> None:
+        s = line.rstrip()
+        if s:
+            stderr_buf.append(s)
+            logger.warning(f"[oneshot-img-stderr] {s}")
+
     options = ClaudeAgentOptions(
         model=model,
         max_turns=4,
         permission_mode="bypassPermissions",
         allowed_tools=["Read"],
+        stderr=_stderr_cb,
     )
     full_prompt = (
         f"Use the Read tool to view the image at {image_path}, then answer "
@@ -103,7 +124,11 @@ async def ask_with_image(
         logger.warning(f"oauth_oneshot.ask_with_image timed out after {timeout_s}s")
         return ""
     except Exception as e:
-        logger.warning(f"oauth_oneshot.ask_with_image failed: {type(e).__name__}: {e}")
+        tail = "\n".join(stderr_buf[-20:]) if stderr_buf else "(empty)"
+        logger.warning(
+            f"oauth_oneshot.ask_with_image failed: {type(e).__name__}: {e}; "
+            f"stderr-tail: {tail}"
+        )
         return ""
 
     return "\n".join(last_turn_texts).strip()
