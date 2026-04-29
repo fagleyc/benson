@@ -31,7 +31,10 @@
           <option value="office">Office</option>
           <option value="patio">Patio / Deck</option>
         </select>
-        <span class="ms-auto">Voice replies route to that room's speaker.</span>
+        <span class="ms-auto d-flex align-items-center gap-2">
+          Voice replies route to that room's speaker.
+          <button type="button" id="chat-clear-btn" class="btn btn-sm btn-outline-secondary" title="Clear chat history">Clear</button>
+        </span>
       </div>
       <div id="chat-log-full" class="card-body" style="height: 55vh; overflow-y: auto;">
         <div class="text-secondary small text-center my-4">
@@ -45,14 +48,18 @@
       </div>
       <form class="card-footer p-2 benson-chat-form" hx-post="/hub/chat"
             hx-target="#chat-log-full" hx-swap="beforeend"
-            hx-on::after-request="this.querySelector('input[name=text]').value=''; this.querySelector('input[name=voice_input]').value=''; document.getElementById('chat-log-full').scrollTop = 9e9; this.querySelector('input[name=text]').focus();">
+            hx-encoding="multipart/form-data"
+            hx-on::after-request="this.querySelector('input[name=text]').value=''; this.querySelector('input[name=voice_input]').value=''; var ii=this.querySelector('input[name=image]'); if(ii) ii.value=''; var pv=this.querySelector('.benson-image-preview'); if(pv) pv.innerHTML=''; document.getElementById('chat-log-full').scrollTop = 9e9; this.querySelector('input[name=text]').focus(); bensonSaveChatHistory();">
         <input type="hidden" name="speaker" value="Casey">
         <input type="hidden" name="room" value="hub">
         <input type="hidden" name="voice_input" value="">
+        <input type="file" name="image" accept="image/*" class="benson-image-input" style="display:none">
+        <div class="benson-image-preview small text-secondary" style="padding:0 .25rem .25rem"></div>
         <div class="input-group">
           <button type="button" class="btn btn-outline-warning btn-lg benson-mic-btn" title="Click to talk">🎙️</button>
-          <input type="text" name="text" class="form-control form-control-lg"
-                 placeholder="Ask Benson…" autofocus autocomplete="off" required>
+          <button type="button" class="btn btn-outline-warning btn-lg benson-attach-btn" title="Attach image (or paste from clipboard)">📎</button>
+          <input type="text" name="text" class="form-control form-control-lg benson-text-input"
+                 placeholder="Ask Benson… (or paste an image)" autofocus autocomplete="off">
           <button class="btn btn-warning btn-lg" type="submit">
             Send <span class="htmx-indicator">…</span>
           </button>
@@ -87,4 +94,102 @@
     </div>
   </div>
 </div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function(){
+  var STORAGE_KEY = 'benson_chat_full_history';
+  var log = document.getElementById('chat-log-full');
+  var form = document.querySelector('.benson-chat-form');
+
+  // --- Restore persisted history on load ---
+  var saved = localStorage.getItem(STORAGE_KEY);
+  if (saved && log) {
+    // Remove the placeholder hint text (first child div.text-secondary) if history exists
+    var hint = log.querySelector('div.text-secondary.small.text-center');
+    if (hint) hint.remove();
+    log.innerHTML = saved;
+    log.scrollTop = 9e9;
+  }
+
+  // --- Save history helper (called from hx-on::after-request) ---
+  window.bensonSaveChatHistory = function() {
+    if (log) {
+      // Strip the hint div if still present before saving
+      var hint = log.querySelector('div.text-secondary.small.text-center');
+      if (hint) hint.remove();
+      localStorage.setItem(STORAGE_KEY, log.innerHTML);
+    }
+  };
+
+  // --- Clear button ---
+  var clearBtn = document.getElementById('chat-clear-btn');
+  if (clearBtn) {
+    clearBtn.addEventListener('click', function() {
+      localStorage.removeItem(STORAGE_KEY);
+      if (log) {
+        log.innerHTML = '<div class="text-secondary small text-center my-4">' +
+          'Ask Benson anything. He can answer questions about the house, ' +
+          'control fans / lights / shades / Sonos, and pull up recipes.<br>' +
+          'Try: <em>"turn off the master bedroom fan light"</em>, ' +
+          '<em>"what chores does Zander have today?"</em>, ' +
+          '<em>"open the shades"</em>.<br>' +
+          '<strong>🎙 Click the mic to talk</strong> — Benson replies on your room\'s speaker.' +
+          '</div>';
+      }
+    });
+  }
+
+  // --- Attach button + file picker ---
+  if (form) {
+    var attachBtn = form.querySelector('.benson-attach-btn');
+    var fileInput = form.querySelector('.benson-image-input');
+    var textInput = form.querySelector('.benson-text-input');
+    var preview   = form.querySelector('.benson-image-preview');
+
+    function showPreview(file) {
+      if (!file || !preview) { if (preview) preview.innerHTML = ''; return; }
+      var url = URL.createObjectURL(file);
+      preview.innerHTML =
+        '<div class="d-flex align-items-center gap-2 mt-1">' +
+        '  <img src="' + url + '" style="max-height:48px;max-width:80px;border-radius:4px;border:1px solid #444">' +
+        '  <span>' + (file.name || 'pasted image') + ' (' + Math.round(file.size/1024) + ' KB)</span>' +
+        '  <button type="button" class="btn btn-sm btn-outline-secondary" style="padding:0 .4rem">×</button>' +
+        '</div>';
+      preview.querySelector('button').addEventListener('click', function() {
+        fileInput.value = '';
+        preview.innerHTML = '';
+      });
+    }
+
+    if (attachBtn && fileInput) {
+      attachBtn.addEventListener('click', function() { fileInput.click(); });
+      fileInput.addEventListener('change', function() {
+        showPreview(fileInput.files && fileInput.files[0]);
+      });
+    }
+
+    // Clipboard paste — intercept image items
+    if (textInput) {
+      textInput.addEventListener('paste', function(e) {
+        var items = (e.clipboardData || {}).items || [];
+        for (var i = 0; i < items.length; i++) {
+          var it = items[i];
+          if (it.kind === 'file' && it.type.indexOf('image/') === 0) {
+            var blob = it.getAsFile();
+            if (!blob) continue;
+            var dt = new DataTransfer();
+            dt.items.add(blob);
+            fileInput.files = dt.files;
+            showPreview(blob);
+            e.preventDefault();
+            break;
+          }
+        }
+      });
+    }
+  }
+})();
+</script>
 {% endblock %}
