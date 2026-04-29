@@ -1944,6 +1944,101 @@ async def fetch_url(url: str, query: str) -> dict:
     }
 
 
+# ─── Self-awareness + self-modification ─────────────────────────────────
+@_register(
+    "read_my_conversations",
+    "Read your own recent conversations from the local DB. Use this when "
+    "reflecting on your own past behavior — what you said, what failed, "
+    "what someone keeps having to repeat to you. Returns a list of "
+    "(speaker, room, user_text, your_response, created_at) rows. Filter "
+    "by speaker (Casey/Lindsey/Cole/Zander) and/or a substring search.",
+    {
+        "type": "object",
+        "properties": {
+            "days_back": {"type": "integer", "default": 7, "minimum": 1, "maximum": 60},
+            "speaker": {"type": "string", "description": "Optional. Filter to one person."},
+            "search": {"type": "string", "description": "Optional case-insensitive substring filter on user_text or response."},
+            "limit": {"type": "integer", "default": 50, "minimum": 1, "maximum": 200},
+        },
+        "required": [],
+    },
+)
+async def _tool_read_my_conversations(
+    days_back: int = 7,
+    speaker: str | None = None,
+    search: str | None = None,
+    limit: int = 50,
+) -> dict:
+    from self_modify import read_my_conversations
+    return await read_my_conversations(
+        days_back=days_back, speaker=speaker, search=search, limit=limit
+    )
+
+
+@_register(
+    "read_my_logs",
+    "Read your own service logs (journalctl -u benson). Use this when "
+    "diagnosing why a tool failed or a request didn't go through. `since` "
+    "accepts strings like '1 hour ago', 'today', '2026-04-28 12:00'. "
+    "Defaults to the last 100 lines.",
+    {
+        "type": "object",
+        "properties": {
+            "lines": {"type": "integer", "default": 100, "minimum": 1, "maximum": 500},
+            "since": {"type": "string", "description": "Optional. Journalctl-style relative time."},
+        },
+        "required": [],
+    },
+)
+async def _tool_read_my_logs(lines: int = 100, since: str | None = None) -> dict:
+    from self_modify import read_my_logs
+    return await read_my_logs(lines=lines, since=since)
+
+
+@_register(
+    "list_my_tools",
+    "Return a list of every tool currently registered in this Benson "
+    "instance — names + one-line descriptions. Use this when deciding "
+    "whether a capability already exists before proposing a new one, "
+    "or when describing your own surface to the household.",
+    {"type": "object", "properties": {}, "required": []},
+)
+async def _tool_list_my_tools() -> dict:
+    from self_modify import list_my_tools
+    return await list_my_tools()
+
+
+@_register(
+    "propose_change",
+    "Open a self-modification proposal: spawn a coding session that "
+    "edits Benson's own source in /opt/benson and commits to a fresh "
+    "git branch. Casey reviews the diff on the /admin/proposals page "
+    "and clicks merge to actually apply (which restarts the service). "
+    "Use this when you've identified a real bug, missing capability, or "
+    "rough edge in your own behavior — usually after read_my_conversations "
+    "or read_my_logs surfaces a pattern. Be concrete: rationale should "
+    "name the user-visible problem; instructions should name the "
+    "files/functions/behaviors to change.",
+    {
+        "type": "object",
+        "properties": {
+            "rationale": {
+                "type": "string",
+                "description": "One paragraph: what problem are you solving and why does it matter?",
+            },
+            "instructions": {
+                "type": "string",
+                "description": "Concrete edit plan: which files/functions, what to change, what to leave alone.",
+            },
+        },
+        "required": ["rationale", "instructions"],
+    },
+)
+async def _tool_propose_change(rationale: str, instructions: str) -> dict:
+    from self_modify import propose_change
+    return await propose_change(rationale=rationale, instructions=instructions)
+
+
 # ─── Strip legacy DB-backed memory tools (replaced by file-based memory_*) ─
 _LEGACY_MEMORY_TOOLS = {
     "search_memory",

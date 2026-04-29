@@ -284,6 +284,57 @@ async def cameras_admin(request: Request):
     return templates.TemplateResponse(request, "camera_admin.html", _ctx("advanced"))
 
 
+# ─── Self-modification proposals ─────────────────────────────────────────
+@router.get("/admin/proposals", response_class=HTMLResponse)
+async def proposals_admin(request: Request):
+    from self_modify import list_open_proposals
+    proposals = list_open_proposals()
+    return templates.TemplateResponse(
+        request,
+        "proposals.html",
+        _ctx("advanced", proposals=proposals),
+    )
+
+
+@router.get("/admin/proposals/{branch:path}/diff", response_class=HTMLResponse)
+async def proposal_diff_view(request: Request, branch: str):
+    from self_modify import proposal_diff
+    if not branch.startswith("proposal/"):
+        raise HTTPException(status_code=400, detail="not a proposal branch")
+    try:
+        diff = proposal_diff(branch)
+    except Exception as e:
+        diff = f"(failed to load diff: {e})"
+    return HTMLResponse(
+        f"<pre style='font-family:ui-monospace,monospace;font-size:12px;"
+        f"white-space:pre-wrap;line-height:1.4'>{_html_escape(diff)}</pre>"
+    )
+
+
+@router.post("/admin/proposals/{branch:path}/merge")
+async def proposal_merge(branch: str):
+    from self_modify import apply_proposal
+    if not branch.startswith("proposal/"):
+        raise HTTPException(status_code=400, detail="not a proposal branch")
+    result = await asyncio.to_thread(apply_proposal, branch)
+    return result
+
+
+@router.post("/admin/proposals/{branch:path}/reject")
+async def proposal_reject(branch: str):
+    from self_modify import reject_proposal
+    if not branch.startswith("proposal/"):
+        raise HTTPException(status_code=400, detail="not a proposal branch")
+    return await asyncio.to_thread(reject_proposal, branch)
+
+
+def _html_escape(s: str) -> str:
+    return (
+        s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        .replace('"', "&quot;").replace("'", "&#39;")
+    )
+
+
 # ─── Trust the Caddy root CA on iPads ────────────────────────────────────
 @router.get("/admin/install-cert", response_class=HTMLResponse)
 async def install_cert_page(request: Request):

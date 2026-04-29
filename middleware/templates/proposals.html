@@ -1,0 +1,90 @@
+{% extends "layout.html" %}
+{% block title %}Proposals — Fagley House Hub{% endblock %}
+{% block content %}
+<a href="/advanced" class="text-secondary">← Advanced</a>
+<h2 class="mt-3 mb-1">Self-Modification Proposals</h2>
+<p class="text-secondary small mb-3">
+  Branches Benson opened against his own source. Review the diff, then merge
+  to fast-forward into <code>main</code> and restart the service. Reject deletes
+  the branch without applying.
+</p>
+
+{% if not proposals %}
+<div class="card bg-dark border-secondary p-4 text-center text-secondary">
+  No open proposals. When Benson notices a fixable issue (or you ask him to),
+  he'll queue a branch here for review.
+</div>
+{% endif %}
+
+{% for p in proposals %}
+<div class="card bg-dark border-secondary p-3 mb-3" id="card-{{ loop.index }}">
+  <div class="d-flex justify-content-between align-items-baseline">
+    <div>
+      <h5 class="mb-1">{{ p.subject }}</h5>
+      <div class="small text-secondary">
+        <code>{{ p.branch }}</code> · {{ p.date }} · {{ p.commit_count }} commit{% if p.commit_count != 1 %}s{% endif %}
+      </div>
+      <div class="small text-secondary mt-1">{{ p.diffstat }}</div>
+    </div>
+    <div class="btn-group">
+      <button class="btn btn-sm btn-outline-secondary"
+              onclick="toggleDiff('{{ p.branch }}', {{ loop.index }})">
+        View diff
+      </button>
+      <button class="btn btn-sm btn-success"
+              onclick="merge('{{ p.branch }}', {{ loop.index }})">
+        Merge + restart
+      </button>
+      <button class="btn btn-sm btn-outline-danger"
+              onclick="reject('{{ p.branch }}', {{ loop.index }})">
+        Reject
+      </button>
+    </div>
+  </div>
+  <div id="diff-{{ loop.index }}" class="mt-2" style="display:none"></div>
+  <div id="result-{{ loop.index }}" class="mt-2 small"></div>
+</div>
+{% endfor %}
+
+<script>
+async function toggleDiff(branch, idx) {
+  const box = document.getElementById('diff-' + idx);
+  if (box.style.display === 'block') { box.style.display = 'none'; return; }
+  box.innerHTML = '<div class="text-secondary small">loading diff…</div>';
+  box.style.display = 'block';
+  const r = await fetch('/admin/proposals/' + encodeURIComponent(branch) + '/diff');
+  box.innerHTML = await r.text();
+}
+
+async function merge(branch, idx) {
+  if (!confirm('Merge ' + branch + ' to main and restart benson?')) return;
+  const result = document.getElementById('result-' + idx);
+  result.innerHTML = '<span class="text-secondary">applying…</span>';
+  const r = await fetch('/admin/proposals/' + encodeURIComponent(branch) + '/merge', {method:'POST'});
+  const j = await r.json();
+  if (j.ok) {
+    result.innerHTML = '<span class="text-success">✓ merged + restarted</span>';
+    setTimeout(() => location.reload(), 1500);
+  } else {
+    result.innerHTML = '<span class="text-danger">✗ failed: ' +
+      (j.error || ('exit ' + j.exit_code)) + '</span>' +
+      '<pre class="small mt-1 p-2" style="background:#0f1419;border-radius:6px">' +
+      ((j.stdout || '') + (j.stderr || '')).replace(/[<>&]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[c])) +
+      '</pre>';
+  }
+}
+
+async function reject(branch, idx) {
+  if (!confirm('Delete proposal branch ' + branch + '?')) return;
+  const result = document.getElementById('result-' + idx);
+  const r = await fetch('/admin/proposals/' + encodeURIComponent(branch) + '/reject', {method:'POST'});
+  const j = await r.json();
+  if (j.ok) {
+    result.innerHTML = '<span class="text-secondary">deleted</span>';
+    setTimeout(() => location.reload(), 800);
+  } else {
+    result.innerHTML = '<span class="text-danger">✗ ' + (j.error || 'failed') + '</span>';
+  }
+}
+</script>
+{% endblock %}
