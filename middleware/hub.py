@@ -433,22 +433,102 @@ async def partial_recent_conv(request: Request):
     return templates.TemplateResponse(request, "_recent_conv.html", {"conversations": rows})
 
 
+_HUB_ATTACHMENT_DIR = Path("/tmp/benson-attachments")
+_HUB_ATTACHMENT_MAX_BYTES = 20 * 1024 * 1024  # 20MB
+
+# Lazy import — UploadFile sits in fastapi but adding it to the top-level
+# import keeps the existing imports tidy even when nobody touches it.
+from fastapi import File, UploadFile  # noqa: E402
+from fastapi.responses import FileResponse  # noqa: E402
+
+
+@router.get("/hub/attachment")
+async def hub_attachment(p: str):
+    """Serve a hub-uploaded attachment for inline preview in the chat
+    log. Path-locked to /tmp/benson-attachments/* — refuses anything
+    else so this can't be used as an arbitrary file reader."""
+    target = Path(p).resolve()
+    base = _HUB_ATTACHMENT_DIR.resolve()
+    try:
+        target.relative_to(base)
+    except ValueError:
+        raise HTTPException(status_code=403, detail="not under attachment dir")
+    if not target.is_file():
+        raise HTTPException(status_code=404, detail="not found")
+    return FileResponse(str(target))
+
+
 @router.post("/hub/chat", response_class=HTMLResponse)
 async def hub_chat(
     request: Request,
-    text: str = Form(...),
+    text: str = Form(""),
     speaker: str = Form("Casey"),
     room: str = Form("hub"),
     voice_input: str = Form(""),  # "1" if mic was used
+    image: UploadFile | None = File(None),
 ):
     """Forward to /conversation pipeline; return HTML chat-turn fragment.
 
-    Imported lazily to avoid a circular import when hub is included in main.
+    Optionally accepts an image upload (file picker or clipboard paste).
+    The image is saved to /tmp/benson-attachments/<uuid>.<ext> and the
+    user's text is annotated with `[attachment: <mime> at <path>]` —
+    the format the system prompt already documents under 'Attachments
+    arrive in messages as bracketed annotations'.
     """
     from main import handle_conversation
 
+    user_text = (text or "").strip()
+    saved_path: str | None = None
+    saved_mime: str | None = None
+
+    if image is not None and (image.filename or image.size):
+        # Validate type — only image/* allowed from the hub chat. Signal
+        # already has its own attachment path; this widget is for paste/upload.
+        mime = (image.content_type or "").lower()
+        if not mime.startswith("image/"):
+            return HTMLResponse(
+                f'<div class="text-danger small p-2">Unsupported file type '
+                f'(got {mime or "unknown"}). Images only on the hub chat.</div>',
+                status_code=400,
+            )
+        body = await image.read()
+        if len(body) > _HUB_ATTACHMENT_MAX_BYTES:
+            return HTMLResponse(
+                f'<div class="text-danger small p-2">File too large '
+                f'({len(body)} bytes; cap is {_HUB_ATTACHMENT_MAX_BYTES}).</div>',
+                status_code=400,
+            )
+        ext = (mime.split("/", 1)[1] if "/" in mime else "bin").split("+", 1)[0]
+        if ext == "jpeg":
+            ext = "jpg"
+        _HUB_ATTACHMENT_DIR.mkdir(parents=True, exist_ok=True)
+        import uuid as _uuid
+        fname = f"hub-{_uuid.uuid4().hex[:12]}.{ext}"
+        saved_path = str(_HUB_ATTACHMENT_DIR / fname)
+        with open(saved_path, "wb") as f:
+            f.write(body)
+        saved_mime = mime
+
+        # Annotate so the agent's existing attachment-handling prompt
+        # ('analyze_image with a precise query, then chain into…') fires.
+        # If the user didn't supply text, give the agent a sensible default.
+        annotation = f"[attachment: {saved_mime} at {saved_path}]"
+        if user_text:
+            user_text = f"{user_text}\n\n{annotation}"
+        else:
+            user_text = (
+                "Look at this image and tell me what it is and what I most "
+                "likely want done with it.\n\n" + annotation
+            )
+
+    if not user_text:
+        return HTMLResponse(
+            '<div class="text-danger small p-2">Need either text or an image.</div>',
+            status_code=400,
+        )
+
     payload = {
-        "text": text,
+        "text": user_text,
         "speaker": speaker,
         "room": room,
         "voice_input": voice_input == "1",
@@ -463,9 +543,10 @@ async def hub_chat(
         request,
         "_chat_turn.html",
         {
-            "user_text": text,
+            "user_text": text or ("[image only]" if saved_path else ""),
             "response": result["response"],
             "tier": result["tier"],
             "spoken_on": result.get("spoken_on"),
+            "image_path": saved_path,
         },
     )

@@ -207,6 +207,19 @@ async def run_agent(
             system_prompt, speaker=speaker, room=room
         )
 
+        # Capture the bundled CLI's stderr into the same conversation log
+        # so the next 'Fatal error in message reader: exit code 1' isn't
+        # opaque. The SDK only routes stderr to a callback if one is set —
+        # without this, "Check stderr output for details" resolves to
+        # nothing, which is what we've been seeing all day.
+        stderr_buf: list[str] = []
+
+        def _stderr_cb(line: str) -> None:
+            stripped = line.rstrip()
+            if stripped:
+                stderr_buf.append(stripped)
+                logger.warning(f"[sdk-stderr {session_id[:8]}] {stripped}")
+
         options = ClaudeAgentOptions(
             system_prompt=sys_prompt,
             mcp_servers={"benson": SERVER},
@@ -215,6 +228,7 @@ async def run_agent(
             model=_MODEL_FOR_TIER.get(choice.tier, "haiku"),
             max_turns=8,
             session_id=session_id,
+            stderr=_stderr_cb,
         )
 
         # Pull history BEFORE this turn is logged (main.py logs after run_agent returns)
@@ -250,8 +264,13 @@ async def run_agent(
             response = "\n".join(p for p in text_parts if p).strip() or "(no response)"
             return response, "oauth_" + choice.tier.value, meta
         except Exception as e:
-            logger.warning(f"OAuth agent failed ({type(e).__name__}: {e}); falling back to API with history")
+            captured_stderr = "\n".join(stderr_buf[-20:]) if stderr_buf else "(no stderr captured)"
+            logger.warning(
+                f"OAuth agent failed ({type(e).__name__}: {e}); session={session_id[:8]} "
+                f"stderr-tail:\n{captured_stderr}"
+            )
             meta["oauth_error"] = f"{type(e).__name__}: {e}"
+            meta["stderr_tail"] = captured_stderr
 
     # No API fallback — Casey wants everything on OAuth. If the SDK call
     # failed, surface the failure honestly so we can fix the root cause

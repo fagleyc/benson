@@ -1,5 +1,13 @@
 <div class="mb-2">
-  <div class="chat-bubble-user mb-1">{{ user_text }}</div>
+  <div class="chat-bubble-user mb-1">
+    {% if image_path %}
+      <div class="mb-1">
+        <img src="/hub/attachment?p={{ image_path }}" alt="attached image"
+             style="max-width:100%;max-height:160px;border-radius:6px;border:1px solid #444">
+      </div>
+    {% endif %}
+    {% if user_text %}{{ user_text }}{% endif %}
+  </div>
   <div class="chat-bubble-benson">{{ response }}</div>
   <div class="chat-meta text-end">
     {{ tier }}
