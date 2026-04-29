@@ -40,6 +40,22 @@ logger = logging.getLogger("benson.self_modify")
 
 REPO_DIR = Path("/opt/benson")
 APPLY_SCRIPT = REPO_DIR / "scripts" / "apply_proposal.sh"
+PROPOSAL_LOG_DIR = Path("/tmp/benson-proposals")
+
+# Module-level lock — only one propose_change session at a time.
+# The bundled Claude Code CLI subprocess doesn't tolerate concurrent
+# sessions on the same machine, and this morning Benson opened three
+# in 9 minutes. Second one crashed with "Fatal error in message
+# reader: exit code 1". Lock is asyncio (lives inside the event loop).
+_PROPOSAL_LOCK: asyncio.Lock | None = None
+
+
+def _proposal_lock() -> asyncio.Lock:
+    """Lazy-init so we bind to the right loop."""
+    global _PROPOSAL_LOCK
+    if _PROPOSAL_LOCK is None:
+        _PROPOSAL_LOCK = asyncio.Lock()
+    return _PROPOSAL_LOCK
 
 
 # ─── Awareness ────────────────────────────────────────────────────────────
@@ -206,6 +222,47 @@ async def grep_my_source(pattern: str, path_glob: str = "**/*.py", max_results: 
     }
 
 
+_LOCAL_FILE_PREFIX = "/tmp/benson-"
+
+
+async def write_local_file(path: str, content: str, append: bool = False) -> dict:
+    """Write a file under /tmp/benson-*. Use this when the household
+    asks you to save logs, notes, debug captures, etc. — instead of
+    claiming you saved a file you can't actually save.
+
+    Path-locked to /tmp/benson-* by design (anything else is refused);
+    real source edits go through propose_change.
+    """
+    if not path.startswith(_LOCAL_FILE_PREFIX):
+        return {
+            "ok": False,
+            "error": f"path must start with '{_LOCAL_FILE_PREFIX}' (got {path!r})",
+        }
+    if len(content) > 1_000_000:
+        return {"ok": False, "error": f"content too large ({len(content)} bytes); cap is 1MB"}
+    p = Path(path)
+    try:
+        # Resolve and re-check — defends against /tmp/benson-../etc/passwd tricks.
+        resolved = p.resolve()
+        if not str(resolved).startswith(_LOCAL_FILE_PREFIX):
+            return {"ok": False, "error": f"resolved path escapes /tmp/benson-*: {resolved}"}
+        # If the prefix is followed by a /, the parent must exist or we create it.
+        # If the prefix is followed by other characters (e.g. /tmp/benson-foo.log),
+        # the parent is /tmp which already exists.
+        resolved.parent.mkdir(parents=True, exist_ok=True)
+        mode = "a" if append else "w"
+        with open(resolved, mode) as f:
+            f.write(content)
+        return {
+            "ok": True,
+            "path": str(resolved),
+            "bytes_written": len(content),
+            "mode": "append" if append else "write",
+        }
+    except Exception as e:
+        return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
+
 async def list_my_tools() -> dict:
     """Return a summary of every tool currently registered in this
     Benson instance — names + one-line descriptions. Useful when
@@ -268,33 +325,72 @@ async def propose_change(rationale: str, instructions: str) -> dict:
 
     The branch is NOT merged automatically. Casey reviews diffs on the
     /admin/proposals page and clicks "merge" to apply.
+
+    Concurrency: only one propose_change session runs at a time. The
+    bundled Claude Code CLI subprocess crashes under concurrent
+    sessions ("Fatal error in message reader: exit code 1"). A second
+    caller gets a clean refusal — wait for the first to finish.
     """
     if not rationale.strip():
         return {"ok": False, "error": "rationale is required"}
     if not instructions.strip():
         return {"ok": False, "error": "instructions are required"}
 
+    lock = _proposal_lock()
+    if lock.locked():
+        return {
+            "ok": False,
+            "error": (
+                "another propose_change is already running. Wait for it "
+                "to finish (check /admin/proposals), then retry. If you "
+                "want to refine an existing proposal, read its branch "
+                "with read_my_source / grep_my_source instead of opening "
+                "a new one."
+            ),
+        }
+
+    async with lock:
+        return await _propose_change_locked(rationale, instructions)
+
+
+async def _propose_change_locked(rationale: str, instructions: str) -> dict:
     branch = _proposal_branch_name(rationale)
     logger.info(f"propose_change: opening branch {branch}")
 
-    # Branch from main. Working tree must be clean — if it isn't,
-    # something else is mid-edit and we should refuse rather than
-    # mix changes.
+    PROPOSAL_LOG_DIR.mkdir(parents=True, exist_ok=True)
+    log_path = PROPOSAL_LOG_DIR / f"{branch.replace('/', '_')}.log"
+
+    def _append_log(text: str) -> None:
+        try:
+            with open(log_path, "a") as f:
+                f.write(text)
+                if not text.endswith("\n"):
+                    f.write("\n")
+        except Exception as e:
+            logger.warning(f"failed to append proposal log: {e}")
+
+    _append_log(f"=== {branch} @ {datetime.now(timezone.utc).isoformat()} ===")
+    _append_log(f"RATIONALE: {rationale}")
+    _append_log(f"INSTRUCTIONS: {instructions}")
+
+    # Branch from main. Working tree must be clean.
     try:
         status = await asyncio.to_thread(_git, ["status", "--porcelain"])
         if status.strip():
+            _append_log(f"REFUSED: dirty tree: {status[:300]}")
             return {
                 "ok": False,
                 "error": f"working tree is dirty, refusing: {status[:200]}",
+                "log_path": str(log_path),
             }
         await asyncio.to_thread(_git, ["checkout", "main"])
         await asyncio.to_thread(_git, ["checkout", "-b", branch])
     except subprocess.CalledProcessError as e:
-        return {"ok": False, "error": f"git setup failed: {e.output[:300]}"}
+        out = e.output.decode() if isinstance(e.output, bytes) else str(e.output)
+        _append_log(f"GIT SETUP FAILED: {out}")
+        return {"ok": False, "error": f"git setup failed: {out[:300]}", "log_path": str(log_path)}
 
-    # Spawn Claude Code SDK session. Same engine Casey uses to talk
-    # to me — we point it at /opt/benson with full edit permissions
-    # and feed it the proposal instructions.
+    # Spawn Claude Code SDK session.
     from claude_agent_sdk import (
         AssistantMessage,
         ClaudeAgentOptions,
@@ -333,8 +429,8 @@ async def propose_change(rationale: str, instructions: str) -> dict:
         f"INSTRUCTIONS: {instructions}"
     )
 
-    summary_lines: list[str] = []
     full_transcript: list[str] = []
+    sdk_error: str | None = None
 
     async def _run():
         async for msg in query(prompt=full_prompt, options=options):
@@ -346,12 +442,18 @@ async def propose_change(rationale: str, instructions: str) -> dict:
     try:
         await asyncio.wait_for(_run(), timeout=900)  # 15 min hard cap
     except asyncio.TimeoutError:
-        logger.warning(f"propose_change: SDK session timed out on {branch}")
+        sdk_error = "SDK session timed out after 900s"
+        logger.warning(f"propose_change: {sdk_error} on {branch}")
     except Exception as e:
-        logger.warning(f"propose_change SDK failed: {type(e).__name__}: {e}")
+        sdk_error = f"{type(e).__name__}: {e}"
+        logger.warning(f"propose_change SDK failed: {sdk_error}")
 
-    # Extract the SUMMARY: block from the transcript.
     transcript_blob = "\n\n".join(full_transcript)
+    _append_log("--- SDK transcript ---")
+    _append_log(transcript_blob if transcript_blob else "(empty transcript)")
+    if sdk_error:
+        _append_log(f"--- SDK ERROR ---\n{sdk_error}")
+
     m = re.search(r"SUMMARY:\s*(.+?)(?:\n\n|$)", transcript_blob, re.DOTALL)
     summary = m.group(1).strip() if m else (transcript_blob[:600] or "(no summary)")
 
@@ -365,33 +467,36 @@ async def propose_change(rationale: str, instructions: str) -> dict:
         commits = []
         logger.warning(f"git log failed on {branch}: {e}")
 
-    # Always switch back to main so the live workspace isn't pinned to
-    # the proposal branch (the apply script will handle the merge).
     try:
         await asyncio.to_thread(_git, ["checkout", "main"])
     except Exception as e:
         logger.warning(f"git checkout main after proposal failed: {e}")
 
     if not commits:
-        # No commits — kill the empty branch so the dashboard doesn't
-        # show an apparent proposal that does nothing.
         try:
             await asyncio.to_thread(_git, ["branch", "-D", branch])
         except Exception:
             pass
+        _append_log("OUTCOME: no commits — branch deleted")
         return {
             "ok": False,
-            "error": "session ended without committing any changes",
+            "error": (
+                f"session ended without committing any changes"
+                + (f" (sdk_error: {sdk_error})" if sdk_error else "")
+            ),
             "branch": None,
             "summary": summary,
+            "log_path": str(log_path),
         }
 
+    _append_log(f"OUTCOME: {len(commits)} commit(s) on {branch}")
     return {
         "ok": True,
         "branch": branch,
         "commits": commits,
         "summary": summary,
         "review_url": "/admin/proposals",
+        "log_path": str(log_path),
     }
 
 

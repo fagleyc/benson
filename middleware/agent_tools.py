@@ -1596,7 +1596,7 @@ async def query_calendar(
     end = now + timedelta(days=days)
     sql = (
         "SELECT user_name, person, title, location, starts_at, ends_at, "
-        "all_day, description "
+        "all_day, description, google_event_id "
         "FROM calendar_events WHERE starts_at >= %s AND starts_at < %s "
         "AND COALESCE(status,'confirmed') != 'cancelled'"
     )
@@ -1623,6 +1623,7 @@ async def query_calendar(
                 "ends_at": r["ends_at"].isoformat() if r["ends_at"] else None,
                 "all_day": r["all_day"],
                 "description": (r["description"] or "")[:300],
+                "event_id": r["google_event_id"],
             }
             for r in rows
         ],
@@ -2052,6 +2053,28 @@ async def _tool_grep_my_source(
 ) -> dict:
     from self_modify import grep_my_source
     return await grep_my_source(pattern=pattern, path_glob=path_glob, max_results=max_results)
+
+
+@_register(
+    "write_local_file",
+    "Save text to a file under /tmp/benson-*. Use this when the household "
+    "asks you to capture logs, save a note, dump debug output, or similar. "
+    "Path-locked to /tmp/benson-* — anything else is refused. For changes "
+    "to your own source code, use propose_change instead. NEVER claim you "
+    "saved a file without calling this tool and confirming ok=true.",
+    {
+        "type": "object",
+        "properties": {
+            "path": {"type": "string", "description": "Must start with '/tmp/benson-'."},
+            "content": {"type": "string", "description": "File contents (max 1MB)."},
+            "append": {"type": "boolean", "default": False, "description": "If true, append; otherwise overwrite."},
+        },
+        "required": ["path", "content"],
+    },
+)
+async def _tool_write_local_file(path: str, content: str, append: bool = False) -> dict:
+    from self_modify import write_local_file
+    return await write_local_file(path=path, content=content, append=append)
 
 
 @_register(
