@@ -114,13 +114,60 @@ _SONNET_PATTERNS = re.compile(
 )
 
 
+# Correction signal — the user is pushing back on something Benson did.
+# These trigger a one-tier bump because corrections are exactly where
+# Haiku/Sonnet produce confident-wrong follow-ups.
+_CORRECTION_PATTERNS = re.compile(
+    r"\b("
+    r"no(?:,|\s+that)|that'?s\s+(?:not|wrong|incorrect)|"
+    r"actually|you'?re\s+wrong|i\s+(?:said|asked)\s+(?:for\s+)?\w+\s+not|"
+    r"that('?s|\s+is)?\s+(?:not|wrong|incorrect)|"
+    r"don'?t|stop|wait(?:,|\s+no)|"
+    r"you\s+(?:still\s+)?(?:didn'?t|don'?t|aren'?t|haven'?t)|"
+    r"(?:you|that)\s+keep|why\s+(?:isn'?t|won'?t)\s+you|"
+    r"i\s*('?m|am)\s+losing\s+(?:hope|patience)|"
+    r"this\s+isn'?t\s+working"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
+def detect_correction(user_text: str) -> bool:
+    """True if this turn looks like a correction/pushback. Used by the
+    orchestrator to bump the tier one notch — corrections need
+    reasoning, not speed."""
+    if not user_text:
+        return False
+    return bool(_CORRECTION_PATTERNS.search(user_text))
+
+
+_TIER_ORDER = [ModelTier.HAIKU, ModelTier.SONNET, ModelTier.OPUS]
+
+
+def _bump_tier(t: ModelTier) -> ModelTier:
+    """Move one tier up; OPUS stays at OPUS."""
+    try:
+        i = _TIER_ORDER.index(t)
+    except ValueError:
+        return t
+    return _TIER_ORDER[min(i + 1, len(_TIER_ORDER) - 1)]
+
+
 def select(
     user_text: str,
     *,
     intent_type: str | None = None,
     is_compose_announce: bool = False,
+    recent_failures: int = 0,
+    is_correction: bool | None = None,
 ) -> ModelChoice:
-    """Pick a model based on user text and intent context."""
+    """Pick a model based on user text and intent context.
+
+    `recent_failures`: count of tool ok=false in this speaker's recent
+    history (any >0 bumps one tier — Casey's call: opus after failure).
+    `is_correction`: True if the user is pushing back; auto-detected
+    from user_text when None. Bumps one tier.
+    """
     if intent_type == "vision":
         return ModelChoice(
             tier=ModelTier.SONNET,
@@ -157,16 +204,39 @@ def select(
         )
 
     if _SONNET_PATTERNS.search(text) or len(text.split()) > 60:
-        return ModelChoice(
+        choice = ModelChoice(
             tier=ModelTier.SONNET,
             model_id=MODEL_ID[ModelTier.SONNET],
             max_tokens=2048,
             rationale="needs structured output, draft, or code",
         )
+    else:
+        choice = ModelChoice(
+            tier=ModelTier.SONNET,
+            model_id=MODEL_ID[ModelTier.SONNET],
+            max_tokens=800,
+            rationale="default chat / household Q&A — Sonnet baseline for reasoning",
+        )
 
+    # Failure-recency bump (Casey 2026-04-30: opus after failure) and
+    # correction bump (user is pushing back) each move one tier up.
+    bumps: list[str] = []
+    if recent_failures > 0:
+        bumps.append(f"recent tool failure x{recent_failures}")
+    correction = detect_correction(text) if is_correction is None else bool(is_correction)
+    if correction:
+        bumps.append("user correction")
+
+    final_tier = choice.tier
+    for _ in bumps:
+        final_tier = _bump_tier(final_tier)
+
+    if final_tier == choice.tier:
+        return choice
     return ModelChoice(
-        tier=ModelTier.SONNET,
-        model_id=MODEL_ID[ModelTier.SONNET],
-        max_tokens=800,
-        rationale="default chat / household Q&A — Sonnet baseline for reasoning",
+        tier=final_tier,
+        model_id=MODEL_ID[final_tier],
+        max_tokens=choice.max_tokens,
+        thinking_tokens=THINKING_BUDGET.get(final_tier, 0),
+        rationale=choice.rationale + f" [bumped: {', '.join(bumps)}]",
     )

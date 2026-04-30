@@ -66,8 +66,59 @@ def _load_speaker_memory(speaker: str | None) -> str:
     return "\n\n".join(chunks)
 
 
+def _relevant_ltm(user_text: str, k: int = 5, max_distance: float = 0.30) -> str:
+    """Semantic-search the LTM (memory_index pgvector table) for memories
+    relevant to this turn's user_text, and format as a system-prompt
+    section. Returns '' if nothing relevant or on any failure — this
+    must NEVER block the agent loop.
+    """
+    if not user_text or len(user_text.strip()) < 4:
+        return ""
+    try:
+        import psycopg2
+        from psycopg2.extras import RealDictCursor
+        from memory import _embedding_model
+        from config import PG_DSN
+
+        emb = _embedding_model().encode(
+            user_text, normalize_embeddings=True
+        ).tolist()
+        emb_lit = "[" + ",".join(f"{x:.6f}" for x in emb) + "]"
+        with psycopg2.connect(**PG_DSN) as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(
+                    "SELECT source_type, title, content, "
+                    "embedding <=> %s::vector AS distance "
+                    "FROM memory_index WHERE embedding IS NOT NULL "
+                    "ORDER BY embedding <=> %s::vector LIMIT %s",
+                    (emb_lit, emb_lit, k),
+                )
+                rows = [dict(r) for r in cur.fetchall()]
+    except Exception as e:
+        logger.warning(f"LTM injection failed (non-fatal): {e}")
+        return ""
+
+    kept = [r for r in rows if r.get("distance", 1.0) <= max_distance]
+    if not kept:
+        return ""
+    lines = ["--- relevant memories from long-term storage ---"]
+    for r in kept:
+        title = (r.get("title") or "").strip()
+        content = (r.get("content") or "").strip()
+        if not content:
+            continue
+        snip = content[:600] + ("…" if len(content) > 600 else "")
+        prefix = f"[{r['source_type']}]"
+        if title:
+            prefix += f" {title}"
+        lines.append(f"\n{prefix}\n{snip}")
+    lines.append("\n--- end relevant memories ---")
+    return "".join(lines)
+
+
 def _build_system_prompt(
-    base: str, *, speaker: str | None, room: str | None
+    base: str, *, speaker: str | None, room: str | None,
+    user_text: str = "",
 ) -> str:
     now = datetime.now().strftime("%A, %Y-%m-%d %H:%M %Z")
     addendum = (
@@ -101,6 +152,23 @@ def _build_system_prompt(
             + mem
             + "\n--- end memory ---"
         )
+
+    # Short-term memory (Benson's own working notes from recent turns).
+    # Auto-loads so future-you doesn't repeat today's mistakes.
+    try:
+        from short_term import stm_for_prompt
+        stm = stm_for_prompt()
+        if stm:
+            addendum += "\n\n" + stm
+    except Exception as e:
+        logger.warning(f"STM load failed (non-fatal): {e}")
+
+    # Long-term memory (semantic search over indexed history).
+    if user_text:
+        ltm = _relevant_ltm(user_text)
+        if ltm:
+            addendum += "\n\n" + ltm
+
     return base + addendum
 
 
@@ -184,6 +252,35 @@ def _save_session_id(speaker: str | None, room: str | None, sid: str) -> None:
     }))
 
 
+# Per-speaker rolling failure counter — tool ok=false in last N turns.
+# Bumps the tier up next turn (Casey 2026-04-30: opus after failure).
+_FAILURE_WINDOW_TURNS = 3
+_recent_failures: dict[str, list[float]] = {}
+
+
+def _record_tool_failure(speaker: str | None) -> None:
+    if not speaker:
+        return
+    buf = _recent_failures.setdefault(speaker, [])
+    buf.append(time.time())
+    # Trim: keep only the most recent N entries.
+    if len(buf) > _FAILURE_WINDOW_TURNS:
+        del buf[: len(buf) - _FAILURE_WINDOW_TURNS]
+
+
+def _failure_count(speaker: str | None) -> int:
+    if not speaker:
+        return 0
+    buf = _recent_failures.get(speaker, [])
+    cutoff = time.time() - 600  # 10 min window
+    return sum(1 for t in buf if t >= cutoff)
+
+
+def _clear_failures_on_success(speaker: str | None) -> None:
+    if speaker:
+        _recent_failures.pop(speaker, None)
+
+
 async def run_agent(
     user_text: str,
     *,
@@ -202,9 +299,12 @@ async def run_agent(
     lock = lock_for(speaker or "anon")  # serialize per-speaker
 
     async with lock:
-        choice = select_model(user_text)
+        recent_fail = _failure_count(speaker)
+        choice = select_model(
+            user_text, recent_failures=recent_fail
+        )
         sys_prompt = _build_system_prompt(
-            system_prompt, speaker=speaker, room=room
+            system_prompt, speaker=speaker, room=room, user_text=user_text
         )
 
         # Capture the bundled CLI's stderr into the same conversation log
@@ -271,6 +371,9 @@ async def run_agent(
             )
             meta["oauth_error"] = f"{type(e).__name__}: {e}"
             meta["stderr_tail"] = captured_stderr
+            # Mark the speaker as having hit a failure — the next turn
+            # will route up one tier (failure-recency bump in select()).
+            _record_tool_failure(speaker)
 
     # No API fallback — Casey wants everything on OAuth. If the SDK call
     # failed, surface the failure honestly so we can fix the root cause

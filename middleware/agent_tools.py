@@ -1990,6 +1990,78 @@ async def fetch_url(url: str, query: str) -> dict:
     }
 
 
+# ─── Short-term memory (Benson's own working notes) ──────────────────
+@_register(
+    "stm_append",
+    "Append a timestamped note to your short-term-memory. Use this "
+    "AUTONOMOUSLY when something nontrivial happens: a tool call "
+    "fails, Casey corrects you, you diagnose a problem, you successfully "
+    "use a side-effect tool (propose_change, send_signal, announce, "
+    "create_calendar_event), or you learn a household pattern. The "
+    "topic name routes to a file: 'today' (default daily journal), "
+    "'inbox' (scratch), or any topic under topics/ (lowercase letters/"
+    "digits/underscores). Common topics: tool_caveats, proposal_outcomes, "
+    "household_patterns, open_questions. STM auto-loads into your system "
+    "prompt next turn — write here so future-you doesn't repeat today's "
+    "mistakes. One short sentence per entry.",
+    {
+        "type": "object",
+        "properties": {
+            "topic": {"type": "string", "description": "today | inbox | tool_caveats | proposal_outcomes | household_patterns | open_questions | <new-snake_case-name>"},
+            "content": {"type": "string", "description": "The note (plain text, one sentence is ideal)."},
+        },
+        "required": ["topic", "content"],
+    },
+)
+async def _tool_stm_append(topic: str, content: str) -> dict:
+    from short_term import stm_append
+    return stm_append(topic=topic, content=content)
+
+
+@_register(
+    "stm_read",
+    "Read your short-term-memory. With topic=None, returns aggregated "
+    "recent files (the prompt already gets this — call only if you "
+    "need the full unabridged version). With topic=<name>, returns the "
+    "named topic's full content.",
+    {
+        "type": "object",
+        "properties": {
+            "topic": {"type": "string", "description": "Optional: today | inbox | <topic name>"},
+            "days_back": {"type": "integer", "default": 1},
+        },
+        "required": [],
+    },
+)
+async def _tool_stm_read(topic: str | None = None, days_back: int = 1) -> dict:
+    from short_term import stm_read
+    return stm_read(topic=topic, days_back=days_back)
+
+
+@_register(
+    "stm_list",
+    "List all short-term-memory files with sizes + last-modified. Useful "
+    "for sanity-checking what you've written and seeing if any topic is "
+    "ballooning past its cap.",
+    {"type": "object", "properties": {}, "required": []},
+)
+async def _tool_stm_list() -> dict:
+    from short_term import stm_list
+    return stm_list()
+
+
+@_register(
+    "stm_tidy",
+    "Trigger a Sonnet-driven dedupe/merge pass over STM files that "
+    "exceed their size cap. Use sparingly — this rewrites files. Each "
+    "rewritten file keeps a .bak alongside.",
+    {"type": "object", "properties": {}, "required": []},
+)
+async def _tool_stm_tidy() -> dict:
+    from short_term import stm_tidy
+    return await stm_tidy()
+
+
 # ─── Self-awareness + self-modification ─────────────────────────────────
 @_register(
     "read_my_conversations",

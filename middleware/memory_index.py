@@ -359,17 +359,157 @@ def index_memory_files() -> int:
     return _upsert(new_rows)
 
 
+def index_proposals() -> int:
+    """Index every proposal branch's rationale + commit summary, plus
+    every merged proposal-meta commit on main, so semantic search can
+    retrieve 'we tried fix X for Y, here's how it went'."""
+    import subprocess
+    import json as _json
+    from psycopg2.extras import Json
+
+    repo = "/opt/benson"
+    seen = _existing_source_ids("proposal")
+    new_rows: list[tuple] = []
+
+    def _git(args: list[str]) -> str:
+        try:
+            return subprocess.check_output(
+                ["git", "-C", repo, *args],
+                stderr=subprocess.STDOUT, timeout=30,
+            ).decode("utf-8", errors="replace")
+        except subprocess.CalledProcessError:
+            return ""
+
+    # Open proposal branches: source_id = branch name.
+    branches = _git(["for-each-ref", "--format=%(refname:short)",
+                     "refs/heads/proposal/"]).splitlines()
+    for br in branches:
+        br = br.strip()
+        if not br or br in seen:
+            continue
+        meta_raw = _git(["show", f"{br}:.benson-proposal-meta.json"])
+        rationale, instructions = "", ""
+        try:
+            meta = _json.loads(meta_raw)
+            rationale = (meta.get("rationale") or "").strip()
+            instructions = (meta.get("instructions") or "").strip()
+        except Exception:
+            pass
+        diffstat = _git(["diff", "--stat", f"main..{br}"]).strip().splitlines()
+        stat_line = diffstat[-1] if diffstat else ""
+        text = (
+            (rationale or "(no rationale captured)")
+            + ("\n\nINSTRUCTIONS:\n" + instructions if instructions else "")
+            + ("\n\nCHANGES: " + stat_line if stat_line else "")
+            + "\n\nSTATUS: open (awaiting review on /admin/proposals)"
+        )
+        emb = _embed(text)
+        if emb is None:
+            continue
+        new_rows.append((
+            "proposal", br, "Benson",
+            f"open proposal: {br}",
+            text[:2500], None,
+            Json({"branch": br, "status": "open"}),
+            _embed_to_vector_literal(emb),
+        ))
+
+    # Merged proposal-meta commits on main: source_id = commit sha.
+    log_out = _git(["log", "--all", "--grep=[proposal-meta]", "--format=%H|%s|%ci"])
+    for line in log_out.splitlines():
+        parts = line.split("|", 2)
+        if len(parts) < 3:
+            continue
+        sha, subject, when = parts[0], parts[1], parts[2]
+        if sha in seen:
+            continue
+        body = _git(["show", "--format=%B", "--no-patch", sha])
+        text = body.strip()
+        if not text:
+            continue
+        emb = _embed(text)
+        if emb is None:
+            continue
+        new_rows.append((
+            "proposal", sha, "Benson",
+            f"merged proposal: {subject[:80]}",
+            text[:2500], None,
+            Json({"sha": sha, "subject": subject, "status": "merged"}),
+            _embed_to_vector_literal(emb),
+        ))
+    return _upsert(new_rows)
+
+
+def index_stm() -> int:
+    """Index Benson's short-term-memory topic files. Each topic file is
+    one row keyed by 'stm:<topic>', re-embedded fresh every run so
+    edits/tidying are reflected. Daily journal files also indexed,
+    one row per day. Empty files skipped."""
+    from pathlib import Path as _P
+    from psycopg2.extras import Json
+
+    stm_root = _P("/opt/benson/memory/short_term")
+    if not stm_root.exists():
+        return 0
+
+    new_rows: list[tuple] = []
+
+    def _add(source_id: str, title: str, body: str, occurred_at) -> None:
+        if not body.strip():
+            return
+        emb = _embed(body)
+        if emb is None:
+            return
+        new_rows.append((
+            "stm", source_id, "Benson", title, body[:4000], occurred_at,
+            Json({"path": source_id}),
+            _embed_to_vector_literal(emb),
+        ))
+
+    # Topic files
+    topics_dir = stm_root / "topics"
+    if topics_dir.exists():
+        for fp in sorted(topics_dir.glob("*.md")):
+            from datetime import datetime as _dt
+            mtime = _dt.fromtimestamp(fp.stat().st_mtime)
+            _add(f"stm:topic:{fp.stem}", f"STM topic: {fp.stem}",
+                 fp.read_text(errors="replace"), mtime)
+
+    # Daily journal files: one row per day, identified by date.
+    for fp in sorted(stm_root.glob("*.md")):
+        if fp.name == "inbox.md":
+            from datetime import datetime as _dt
+            mtime = _dt.fromtimestamp(fp.stat().st_mtime)
+            _add("stm:inbox", "STM inbox", fp.read_text(errors="replace"), mtime)
+            continue
+        # Daily files are named YYYY-MM-DD.md
+        stem = fp.stem
+        try:
+            from datetime import datetime as _dt
+            day = _dt.strptime(stem, "%Y-%m-%d")
+        except ValueError:
+            continue
+        _add(f"stm:daily:{stem}", f"STM journal {stem}",
+             fp.read_text(errors="replace"), day)
+
+    # STM rows are upserted (source_id stable per-topic / per-day), so
+    # edits replace prior content rather than accumulating duplicates.
+    return _upsert(new_rows)
+
+
 # ─── Public API ──────────────────────────────────────────────────────────
 def reindex_all() -> dict:
     """Run every indexer. Returns counts per source."""
     counts = {}
-    counts["conversations"] = index_conversations()
-    counts["events"]        = index_calendar_events()
-    counts["recipes"]       = index_recipes()
-    counts["chores"]        = index_chores()
-    counts["events"]        = index_events()
-    counts["list_items"]    = index_list_items()
-    counts["memory_files"]  = index_memory_files()
+    counts["conversations"]   = index_conversations()
+    counts["calendar_events"] = index_calendar_events()
+    counts["recipes"]         = index_recipes()
+    counts["chores"]          = index_chores()
+    counts["events"]          = index_events()
+    counts["list_items"]      = index_list_items()
+    counts["memory_files"]    = index_memory_files()
+    counts["proposals"]       = index_proposals()
+    counts["stm"]             = index_stm()
     counts["total_indexed_rows"] = sum(counts.values())
     with _conn() as c, c.cursor() as cur:
         cur.execute("SELECT source_type, COUNT(*) FROM memory_index GROUP BY source_type")
