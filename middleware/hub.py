@@ -191,7 +191,15 @@ async def chores_page(request: Request):
     from datetime import date, timedelta
     today = date.today()
     days = [today + timedelta(days=i) for i in range(7)]
-    persons = ["Casey", "Lindsey", "Cole", "Zander", "Household"]
+    all_persons = ["Casey", "Lindsey", "Cole", "Zander", "Household"]
+    person_filter = request.query_params.get("person")
+    if person_filter:
+        match = next(
+            (p for p in all_persons if p.lower() == person_filter.lower()), None
+        )
+        persons = [match] if match else all_persons
+    else:
+        persons = all_persons
     chores = await asyncio.to_thread(
         _query,
         """
@@ -206,6 +214,9 @@ async def chores_page(request: Request):
     chores_map = {p: {d.isoformat(): [] for d in days} for p in persons}
     for c in chores:
         p = c["person"] if c["person"] in persons else "Household"
+        if p not in chores_map:
+            # Filtering to a single person — drop rows for other people.
+            continue
         d = c["chore_date"].isoformat() if c["chore_date"] else None
         if d and d in chores_map[p]:
             chores_map[p][d].append(c)
@@ -214,7 +225,8 @@ async def chores_page(request: Request):
             chores_map[p][today.isoformat()].append(c)
     return templates.TemplateResponse(
         request, "chores.html",
-        _ctx("chores", days=days, persons=persons, chores_map=chores_map),
+        _ctx("chores", days=days, persons=persons, chores_map=chores_map,
+             person_filter=person_filter),
     )
 
 

@@ -266,22 +266,49 @@ async function loadToday() {
 
     const cw = document.getElementById('choresWidget');
     const chores = j.chores || [];
+    const esc = s => String(s == null ? '' : s)
+      .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+      .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
     if (chores.length) {
       cw.innerHTML = chores.map(c => {
         const total = (c.open || 0) + (c.done_count || 0);
         const pct = total ? Math.round(100 * (c.done_count || 0) / total) : 0;
         const tag = (c.person === 'Cole' || c.person === 'Zander') ? 'bg-info' : 'bg-secondary';
+        const items = Array.isArray(c.items) ? c.items : [];
+        const shown = items.slice(0, 4);
+        const remainder = items.length - shown.length;
+        let listHtml;
+        if (items.length === 0) {
+          listHtml = '<div class="text-secondary small fst-italic mt-2">All clear</div>';
+        } else {
+          const lis = shown.map(it => {
+            const mark = it.done ? '✓' : '○';
+            const cls = it.done
+              ? 'text-secondary'
+              : 'text-light';
+            const style = it.done ? 'text-decoration: line-through;' : '';
+            return `<li class="${cls}" style="${style}">${mark} ${esc(it.chore_name)}</li>`;
+          }).join('');
+          const tail = remainder > 0
+            ? `<li class="text-secondary fst-italic">…and ${remainder} more</li>`
+            : '';
+          listHtml = `<ul class="list-unstyled small mt-2 mb-0" style="line-height:1.6;">${lis}${tail}</ul>`;
+        }
+        const href = '/chores?person=' + encodeURIComponent(c.person);
         return `<div class="col-12 col-md-4">
-          <div class="p-3" style="background:#1a2128;border:1px solid #2d3a47;border-radius:10px;">
-            <div class="d-flex justify-content-between mb-2">
-              <strong>${c.person}</strong>
-              <span class="badge ${tag}">${total} total</span>
+          <a href="${href}" class="d-block text-decoration-none text-reset">
+            <div class="p-3 home-card" style="background:#1a2128;border:1px solid #2d3a47;border-radius:10px;">
+              <div class="d-flex justify-content-between mb-2">
+                <strong>${esc(c.person)}</strong>
+                <span class="badge ${tag}">${total} total</span>
+              </div>
+              <div class="d-flex justify-content-between small text-secondary mb-1">
+                <span>${c.open || 0} open</span><span>${c.done_count || 0} done</span>
+              </div>
+              <div class="chore-bar"><div style="width: ${pct}%"></div></div>
+              ${listHtml}
             </div>
-            <div class="d-flex justify-content-between small text-secondary mb-1">
-              <span>${c.open || 0} open</span><span>${c.done_count || 0} done</span>
-            </div>
-            <div class="chore-bar"><div style="width: ${pct}%"></div></div>
-          </div>
+          </a>
         </div>`;
       }).join('');
     } else {

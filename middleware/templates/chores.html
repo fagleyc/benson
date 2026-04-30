@@ -1,8 +1,11 @@
 {% extends "layout.html" %}
 {% block title %}Chores — Fagley House Hub{% endblock %}
 {% block content %}
+{% if person_filter %}
+  <div class="mb-2"><a href="/chores" class="small text-warning text-decoration-none">← All chores</a></div>
+{% endif %}
 <div class="d-flex justify-content-between align-items-baseline mb-3">
-  <h2 class="mb-0">Chores</h2>
+  <h2 class="mb-0">Chores{% if person_filter %} <span class="text-secondary fs-5">· {{ persons[0] }}</span>{% endif %}</h2>
   <div class="text-secondary small">Person × day · click ○/✓ to toggle · hover to delete · "+ Add" for new</div>
 </div>
 

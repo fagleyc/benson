@@ -111,18 +111,36 @@ async def today_dashboard() -> dict[str, Any]:
         """,
         (today,),
     )
-    chore_summary = await asyncio.to_thread(
+    # Pull every chore row for today (or undated) once, then aggregate in
+    # Python so the widget can render inline items without a second round-trip
+    # and without losing the existing summary counts.
+    chore_rows = await asyncio.to_thread(
         _query,
         """
-        SELECT person, count(*) FILTER (WHERE NOT done) AS open,
-               count(*) FILTER (WHERE done) AS done_count
+        SELECT id, person, chore_name, done
         FROM chores
         WHERE chore_date = %s OR chore_date IS NULL
-        GROUP BY person
-        ORDER BY person
+        ORDER BY person, done, chore_name
         """,
         (today,),
     )
+    by_person: dict[str, dict[str, Any]] = {}
+    for r in chore_rows:
+        p = r["person"] or "Household"
+        bucket = by_person.setdefault(
+            p, {"person": p, "open": 0, "done_count": 0, "items": []}
+        )
+        if r["done"]:
+            bucket["done_count"] += 1
+        else:
+            bucket["open"] += 1
+        bucket["items"].append(
+            {"id": r["id"], "chore_name": r["chore_name"], "done": bool(r["done"])}
+        )
+    # Items: undone first, then alphabetical by name (per-person).
+    for bucket in by_person.values():
+        bucket["items"].sort(key=lambda i: (i["done"], (i["chore_name"] or "").lower()))
+    chore_summary = [by_person[k] for k in sorted(by_person.keys())]
     return {
         "date": today.isoformat(),
         "meal": meal,
