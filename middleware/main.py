@@ -134,7 +134,31 @@ async def handle_conversation(request: Request) -> dict[str, Any]:
             system_prompt=_system_prompt(),
         )
         tier = f"ha_compose_announce[{tier}]"
-        await memory.log_conversation(speaker, room, user_text, response, tier)
+
+        # Extract the actual spoken text from the agent's tool calls so
+        # 'what did you say' later returns the real announcement instead
+        # of the wrapper line. Casey 2026-04-30: Benson said he sent a
+        # Move announcement but couldn't recall the text — because we
+        # only logged 'Sent it to the Move' as benson_response.
+        spoken: list[str] = []
+        for tc in (_meta.get("tool_calls") or []):
+            if tc.get("name") == "announce":
+                msg = (tc.get("input") or {}).get("message", "").strip()
+                if msg:
+                    spoken.append(msg)
+        if spoken:
+            logged_response = (
+                response.rstrip()
+                + "\n\n[Spoken on "
+                + (intent.zone_label or intent.zone_entity)
+                + ': "'
+                + " | ".join(spoken)
+                + '"]'
+            )
+        else:
+            logged_response = response
+
+        await memory.log_conversation(speaker, room, user_text, logged_response, tier)
         return {"response": response, "tier": tier}
 
     # Chat path → Claude agent (tools + sessions). Falls back to Ollama on

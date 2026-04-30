@@ -505,15 +505,21 @@ async def calendar_upcoming(days: int = Query(2, ge=1, le=30)) -> dict:
     end = now + timedelta(days=days)
     rows = await asyncio.to_thread(
         _query,
+        # Use the event's effective end window for the lower bound. Events
+        # that "ended an hour ago" drop off; events still in flight (incl.
+        # all-day events whose starts_at = midnight) stay.
+        # Casey 2026-04-30: today's all-day events were vanishing from the
+        # hub widget after 1am because starts_at < now - 1h.
         """
         SELECT user_name, google_event_id, calendar_summary, person, title,
                location, starts_at, ends_at, all_day, status
         FROM calendar_events
-        WHERE starts_at >= %s AND starts_at < %s
+        WHERE COALESCE(ends_at, starts_at + INTERVAL '1 hour') > %s
+          AND starts_at < %s
           AND COALESCE(status, 'confirmed') != 'cancelled'
         ORDER BY starts_at, person
         """,
-        (now - timedelta(hours=1), end),
+        (now, end),
     )
     linked = await asyncio.to_thread(
         _query,
