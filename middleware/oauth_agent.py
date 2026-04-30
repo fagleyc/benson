@@ -276,6 +276,21 @@ def _failure_count(speaker: str | None) -> int:
     return sum(1 for t in buf if t >= cutoff)
 
 
+def recent_failures_snapshot() -> dict:
+    """Read-only view of the per-speaker failure ring buffers, used by
+    the /admin/benson observability page."""
+    cutoff = time.time() - 600
+    out: dict[str, dict] = {}
+    for speaker, buf in _recent_failures.items():
+        recent = [t for t in buf if t >= cutoff]
+        if recent:
+            out[speaker] = {
+                "count_10min": len(recent),
+                "last_failure_age_seconds": int(time.time() - recent[-1]),
+            }
+    return out
+
+
 def _clear_failures_on_success(speaker: str | None) -> None:
     if speaker:
         _recent_failures.pop(speaker, None)

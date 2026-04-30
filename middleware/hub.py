@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from datetime import datetime
 from pathlib import Path
 
@@ -282,6 +283,213 @@ async def google_admin(request: Request):
 @router.get("/admin/cameras", response_class=HTMLResponse)
 async def cameras_admin(request: Request):
     return templates.TemplateResponse(request, "camera_admin.html", _ctx("advanced"))
+
+
+# ─── Benson observability dashboard ──────────────────────────────────────
+@router.get("/admin/benson", response_class=HTMLResponse)
+async def benson_admin(request: Request):
+    ctx = await asyncio.to_thread(_gather_benson_admin_sync)
+    return templates.TemplateResponse(
+        request, "benson_admin.html", _ctx("advanced", **ctx)
+    )
+
+
+def _gather_benson_admin_sync() -> dict:
+    """Collect everything the /admin/benson page renders. Sync calls only —
+    wrapped in to_thread by the route handler."""
+    import json as _json
+    import re as _re
+    import subprocess as _sp
+    from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+
+    out: dict = {}
+
+    # ─── Health checks (✓/✗ list at the top) ──────────────────────────
+    health: list[dict] = []
+
+    def _check(name: str, ok: bool, detail: str = "") -> None:
+        health.append({"name": name, "ok": bool(ok), "detail": detail})
+
+    # Service active
+    try:
+        r = _sp.run(["systemctl", "is-active", "benson.service"],
+                    capture_output=True, text=True, timeout=5)
+        _check("service active", r.stdout.strip() == "active", r.stdout.strip())
+    except Exception as e:
+        _check("service active", False, f"{type(e).__name__}: {e}")
+
+    # OAuth credentials
+    creds = Path.home() / ".claude" / ".credentials.json"
+    creds_ok = creds.exists()
+    expires_str = ""
+    if creds_ok:
+        try:
+            data = _json.loads(creds.read_text())
+            exp_ms = data.get("claudeAiOauth", {}).get("expiresAt", 0)
+            if exp_ms:
+                exp_dt = _dt.fromtimestamp(exp_ms / 1000, _tz.utc)
+                still_good = exp_dt > _dt.now(_tz.utc)
+                creds_ok = still_good
+                expires_str = (
+                    f"expires {exp_dt.isoformat(timespec='minutes')} "
+                    f"({'valid' if still_good else 'EXPIRED'})"
+                )
+        except Exception as e:
+            creds_ok = False
+            expires_str = f"parse error: {e}"
+    _check("oauth credentials valid", creds_ok, expires_str or str(creds))
+
+    # ANTHROPIC_API_KEY should NOT be set (we migrated to OAuth)
+    api_key_set = bool(os.environ.get("ANTHROPIC_API_KEY"))
+    _check(
+        "no ANTHROPIC_API_KEY in env",
+        not api_key_set,
+        "key present — every SDK call may bill API!" if api_key_set else "good (OAuth only)",
+    )
+
+    # Indexer freshness — most recent row in memory_index
+    try:
+        latest = _query_one(
+            "SELECT MAX(created_at) AS m FROM memory_index"
+        )
+        last_idx = (latest or {}).get("m")
+        fresh = bool(last_idx) and (
+            _dt.now(_tz.utc) - last_idx
+        ) < _td(hours=36)
+        _check(
+            "ltm indexer ran in last 36h",
+            fresh,
+            f"last row: {last_idx.isoformat(timespec='minutes') if last_idx else 'never'}",
+        )
+        out["last_indexer_row"] = last_idx.isoformat() if last_idx else None
+    except Exception as e:
+        _check("ltm indexer ran in last 36h", False, str(e))
+
+    # STM auto-curation activity in last 24h
+    try:
+        stm_root = Path("/opt/benson/memory/short_term")
+        cutoff = _dt.now().timestamp() - 24 * 3600
+        active = []
+        for fp in list(stm_root.rglob("*.md")):
+            if fp.stat().st_mtime > cutoff and fp.stat().st_size > 0:
+                active.append(fp.name)
+        _check(
+            "stm written to in last 24h",
+            len(active) > 0,
+            f"{len(active)} file(s): {', '.join(active[:5])}" if active else "no entries — Benson hasn't written autonomously yet",
+        )
+    except Exception as e:
+        _check("stm written to in last 24h", False, str(e))
+
+    out["health"] = health
+
+    # ─── Activity (recent entries) ──────────────────────────────────────
+    # Recent STM entries — parse last few timestamped lines from today's
+    # journal + each topic file.
+    stm_entries: list[dict] = []
+    try:
+        from short_term import STM_ROOT, _today_file, TOPICS_DIR, INBOX_FILE
+        line_re = _re.compile(r"^- \[(\d{2}:\d{2})\] (.+)$")
+        for src_path in [_today_file(), INBOX_FILE] + (
+            sorted(TOPICS_DIR.glob("*.md")) if TOPICS_DIR.exists() else []
+        ):
+            if not src_path.exists() or src_path.stat().st_size == 0:
+                continue
+            # Get the last 3 timestamped entries from this file.
+            lines = src_path.read_text(errors="replace").splitlines()
+            entries = []
+            for ln in lines:
+                m = line_re.match(ln.strip())
+                if m:
+                    entries.append({"time": m.group(1), "content": m.group(2)})
+            for e in entries[-3:]:
+                stm_entries.append({
+                    "topic": src_path.stem,
+                    "time": e["time"],
+                    "content": e["content"][:200],
+                    "modified": _dt.fromtimestamp(src_path.stat().st_mtime).isoformat(timespec="minutes"),
+                })
+        # Sort newest first by modified time + entry time
+        stm_entries.sort(key=lambda x: (x["modified"], x["time"]), reverse=True)
+    except Exception as e:
+        logger.warning(f"stm_entries gather failed: {e}")
+    out["stm_entries"] = stm_entries[:10]
+
+    # Recent proposals (open + last few merged)
+    proposals_open: list[dict] = []
+    try:
+        from self_modify import list_open_proposals
+        proposals_open = list_open_proposals()
+    except Exception as e:
+        logger.warning(f"list_open_proposals failed: {e}")
+    out["proposals_open"] = proposals_open
+
+    # Recently merged proposals — git log on main for [proposal-meta] tags
+    try:
+        log_out = _sp.check_output(
+            ["git", "-C", "/opt/benson", "log", "--all", "-5",
+             "--grep=[proposal-meta]", "--format=%h|%ci|%s"],
+            stderr=_sp.STDOUT, timeout=10,
+        ).decode("utf-8", errors="replace")
+        merged = []
+        for line in log_out.splitlines():
+            parts = line.split("|", 2)
+            if len(parts) == 3:
+                merged.append({"sha": parts[0], "when": parts[1], "subject": parts[2]})
+        out["proposals_merged"] = merged
+    except Exception:
+        out["proposals_merged"] = []
+
+    # Recent tool failures (per-speaker, last 10 min)
+    try:
+        from oauth_agent import recent_failures_snapshot
+        out["recent_failures"] = recent_failures_snapshot()
+    except Exception as e:
+        out["recent_failures"] = {"_error": str(e)}
+
+    # Tier mix from last 24h of conversations
+    try:
+        rows = _query(
+            "SELECT tier, COUNT(*) AS n FROM conversations "
+            "WHERE created_at > NOW() - INTERVAL '24 hours' "
+            "GROUP BY tier ORDER BY n DESC"
+        )
+        out["tier_mix"] = [{"tier": r["tier"] or "(none)", "n": r["n"]} for r in rows]
+    except Exception as e:
+        logger.warning(f"tier_mix failed: {e}")
+        out["tier_mix"] = []
+
+    # ─── Memory structure ────────────────────────────────────────────────
+    # STM file inventory
+    try:
+        from short_term import stm_list
+        out["stm_files"] = stm_list().get("files", [])
+    except Exception as e:
+        out["stm_files"] = []
+        logger.warning(f"stm_list failed: {e}")
+
+    # LTM by source_type
+    try:
+        rows = _query(
+            "SELECT source_type, COUNT(*) AS n, MAX(created_at) AS most_recent "
+            "FROM memory_index GROUP BY source_type ORDER BY n DESC"
+        )
+        out["ltm_by_source"] = [
+            {
+                "source_type": r["source_type"],
+                "n": r["n"],
+                "most_recent": r["most_recent"].isoformat(timespec="minutes") if r["most_recent"] else "",
+            }
+            for r in rows
+        ]
+        total = sum(r["n"] for r in rows)
+        out["ltm_total"] = total
+    except Exception as e:
+        out["ltm_by_source"] = []
+        out["ltm_total"] = 0
+        logger.warning(f"ltm_by_source failed: {e}")
+
+    return out
 
 
 # ─── Self-modification proposals ─────────────────────────────────────────
