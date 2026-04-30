@@ -4,11 +4,14 @@ A single decision point: given user text + (optional) intent type, return
 which Claude model + thinking budget to use.
 
 Tiers:
-  - HAIKU   (claude-haiku-4-5)   : ~700ms-2s. Default chat, HA confirmations,
-                                    short announcements, memory extraction.
-  - SONNET  (claude-sonnet-4-6)  : ~3-6s. Recipe vision, recipe transcript
-                                    extraction, structured output, code,
-                                    drafts. Vision-capable.
+  - HAIKU   (claude-haiku-4-5)   : ~700ms-2s. Reserved for explicitly
+                                    non-reasoning fast paths (none routed
+                                    here by default — see select()).
+  - SONNET  (claude-sonnet-4-6)  : ~3-6s. Default baseline. Chat, HA
+                                    confirmations, announcements, memory
+                                    extraction, recipe vision, recipe
+                                    transcript extraction, structured
+                                    output, code, drafts. Vision-capable.
   - OPUS    (claude-opus-4-7)    : ~10-30s with thinking. Multi-constraint
                                     planning, deep research, architecture.
 """
@@ -128,18 +131,18 @@ def select(
 
     if intent_type == "memory_extraction":
         return ModelChoice(
-            tier=ModelTier.HAIKU,
-            model_id=MODEL_ID[ModelTier.HAIKU],
+            tier=ModelTier.SONNET,
+            model_id=MODEL_ID[ModelTier.SONNET],
             max_tokens=512,
-            rationale="lightweight extraction task; Haiku handles it cheaply",
+            rationale="extraction needs reasoning to avoid hallucinated content; Sonnet",
         )
 
     if is_compose_announce:
         return ModelChoice(
-            tier=ModelTier.HAIKU,
-            model_id=MODEL_ID[ModelTier.HAIKU],
+            tier=ModelTier.SONNET,
+            model_id=MODEL_ID[ModelTier.SONNET],
             max_tokens=400,
-            rationale="3-sentence Sonos announcement; Haiku is plenty",
+            rationale="outbound composition needs reasoning to retain & ground text",
         )
 
     text = user_text or ""
@@ -162,8 +165,8 @@ def select(
         )
 
     return ModelChoice(
-        tier=ModelTier.HAIKU,
-        model_id=MODEL_ID[ModelTier.HAIKU],
+        tier=ModelTier.SONNET,
+        model_id=MODEL_ID[ModelTier.SONNET],
         max_tokens=800,
-        rationale="default chat / household Q&A",
+        rationale="default chat / household Q&A — Sonnet baseline for reasoning",
     )
