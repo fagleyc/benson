@@ -459,6 +459,30 @@ def _gather_benson_admin_sync() -> dict:
         logger.warning(f"tier_mix failed: {e}")
         out["tier_mix"] = []
 
+    # Recent conversation log (last 40 turns) — what the household
+    # actually said to Benson and what he replied. Read-only audit
+    # trail; same data Benson sees when calling read_my_conversations.
+    try:
+        rows = _query(
+            "SELECT id, speaker, room, user_text, benson_response, tier, "
+            "created_at FROM conversations ORDER BY id DESC LIMIT 40"
+        )
+        out["conversations"] = [
+            {
+                "id": r["id"],
+                "speaker": r["speaker"] or "(unknown)",
+                "room": r["room"] or "",
+                "user_text": (r["user_text"] or "")[:600],
+                "benson_response": (r["benson_response"] or "")[:1200],
+                "tier": r["tier"] or "",
+                "created_at": r["created_at"].strftime("%Y-%m-%d %H:%M") if r["created_at"] else "",
+            }
+            for r in rows
+        ]
+    except Exception as e:
+        logger.warning(f"recent conversations failed: {e}")
+        out["conversations"] = []
+
     # ─── Memory structure ────────────────────────────────────────────────
     # STM file inventory
     try:

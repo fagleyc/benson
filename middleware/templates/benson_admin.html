@@ -139,6 +139,59 @@
   </div>
 </div>
 
+<!-- ─── Conversation log ─────────────────────────────────────────── -->
+<div class="card bg-dark border-secondary p-3 mb-3">
+  <div class="d-flex justify-content-between align-items-baseline mb-2">
+    <h5 class="mb-0">Conversations
+      <span class="text-secondary small fw-normal">— last {{ conversations|length }} turns, newest first</span></h5>
+    <input type="text" id="convFilter" class="form-control form-control-sm bg-dark text-light border-secondary"
+           placeholder="filter (speaker, text, tier)…" style="max-width:280px"
+           oninput="filterConvs(this.value)">
+  </div>
+
+  {% if not conversations %}
+    <div class="text-secondary small fst-italic">No conversations logged yet.</div>
+  {% else %}
+    <div id="convList" style="max-height:600px;overflow-y:auto">
+    {% for c in conversations %}
+      <div class="conv-row mb-2 pb-2" style="border-bottom:1px solid #2a3a4a"
+           data-search="{{ (c.speaker ~ ' ' ~ c.room ~ ' ' ~ c.tier ~ ' ' ~ c.user_text ~ ' ' ~ c.benson_response)|lower }}">
+        <div class="small text-secondary mb-1">
+          <span class="badge bg-secondary">{{ c.speaker }}</span>
+          {% if c.room %}<span class="badge bg-secondary">{{ c.room }}</span>{% endif %}
+          {% set t = c.tier %}
+          {% if t %}
+            {% if 'opus' in t %}{% set tcolor = 'bg-warning text-dark' %}
+            {% elif 'sonnet' in t %}{% set tcolor = 'bg-info text-dark' %}
+            {% elif 'haiku' in t %}{% set tcolor = 'bg-success' %}
+            {% elif 'failed' in t %}{% set tcolor = 'bg-danger' %}
+            {% else %}{% set tcolor = 'bg-secondary' %}{% endif %}
+            <span class="badge {{ tcolor }}">{{ t }}</span>
+          {% endif %}
+          <span style="color:#888">· {{ c.created_at }}</span>
+        </div>
+        <div class="small mb-1" style="color:#cfd8dc">
+          <strong style="color:#888">{{ c.speaker }}:</strong>
+          <span style="white-space:pre-wrap">{{ c.user_text }}</span>
+        </div>
+        <div class="small" style="color:#e0c98a">
+          <strong style="color:#aa8a4a">Benson:</strong>
+          <span style="white-space:pre-wrap">{{ c.benson_response }}</span>
+        </div>
+      </div>
+    {% endfor %}
+    </div>
+    <script>
+      function filterConvs(q) {
+        const needle = (q || '').toLowerCase().trim();
+        document.querySelectorAll('#convList .conv-row').forEach(row => {
+          row.style.display = (!needle || row.dataset.search.indexOf(needle) >= 0) ? '' : 'none';
+        });
+      }
+    </script>
+  {% endif %}
+</div>
+
 <!-- ─── Memory structure ─────────────────────────────────────────── -->
 <div class="row">
   <div class="col-lg-6 mb-3">
