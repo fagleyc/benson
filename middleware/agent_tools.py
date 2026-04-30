@@ -1302,7 +1302,11 @@ async def stop_listening(session_id: int | None = None) -> dict:
     "asks 'what's on the counter', 'is anyone in the kitchen', 'check "
     "the stove', etc. Cameras must be registered (the iPad has the "
     "Benson Eye page open). Argument `camera` defaults to 'kitchen'; "
-    "`query` is what to look for.",
+    "`query` is what to look for. Returns a dict with `answer` (the "
+    "vision model's text description) and `image_path` (the saved JPEG "
+    "on disk, e.g. '/tmp/benson-cameras/kitchen.jpg', or null on camera "
+    "error). When the user wants to share the snapshot, pass that "
+    "`image_path` directly to send_signal's `file_paths` parameter.",
     {
         "type": "object",
         "properties": {
@@ -1321,9 +1325,16 @@ async def look_at_camera(query: str, camera: str = "kitchen") -> dict:
     if not path:
         return {
             "ok": False,
+            "image_path": None,
             "error": f"camera '{camera}' not connected. Open https://192.168.0.240/camera/{camera}/page on that iPad in Safari.",
         }
-    return await analyze_image(str(path), query)
+    result = await analyze_image(str(path), query)
+    # Surface the saved snapshot path alongside the answer so the caller can
+    # chain it into send_signal's file_paths (its allowlist already permits
+    # /tmp/benson-* via _SIGNAL_FILE_PREFIXES).
+    if isinstance(result, dict):
+        result.setdefault("image_path", str(path))
+    return result
 
 
 # ─── File-based Memory (replaces pgvector MemoryStore) ───────────────────
