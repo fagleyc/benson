@@ -16,6 +16,7 @@ import logging
 import time
 import uuid
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from claude_agent_sdk import (
@@ -322,11 +323,14 @@ async def run_agent(
             system_prompt, speaker=speaker, room=room, user_text=user_text
         )
 
-        # Capture the bundled CLI's stderr into the same conversation log
-        # so the next 'Fatal error in message reader: exit code 1' isn't
-        # opaque. The SDK only routes stderr to a callback if one is set —
-        # without this, "Check stderr output for details" resolves to
-        # nothing, which is what we've been seeing all day.
+        # Capture the bundled CLI's stderr AND its --debug-file output.
+        # The "Fatal error in message reader: exit code 1" we keep
+        # hitting is actually upstream API errors that the CLI prints
+        # on STDOUT (not stderr) — the SDK's stream-json parser chokes
+        # on the non-JSON line and re-raises as exit-1. Stderr is
+        # genuinely empty for that error class. The CLI's own debug
+        # log is the only place to see the actual API error message,
+        # so we route it to a per-session file we can read on crash.
         stderr_buf: list[str] = []
 
         def _stderr_cb(line: str) -> None:
@@ -334,6 +338,10 @@ async def run_agent(
             if stripped:
                 stderr_buf.append(stripped)
                 logger.warning(f"[sdk-stderr {session_id[:8]}] {stripped}")
+
+        sdk_debug_dir = Path("/tmp/benson-sdk-debug")
+        sdk_debug_dir.mkdir(parents=True, exist_ok=True)
+        sdk_debug_log = sdk_debug_dir / f"{session_id}.log"
 
         options = ClaudeAgentOptions(
             system_prompt=sys_prompt,
@@ -344,6 +352,7 @@ async def run_agent(
             max_turns=8,
             session_id=session_id,
             stderr=_stderr_cb,
+            extra_args={"debug-file": str(sdk_debug_log)},
         )
 
         # Pull history BEFORE this turn is logged (main.py logs after run_agent returns)
@@ -380,15 +389,45 @@ async def run_agent(
             return response, "oauth_" + choice.tier.value, meta
         except Exception as e:
             captured_stderr = "\n".join(stderr_buf[-20:]) if stderr_buf else "(no stderr captured)"
+
+            # Read the CLI debug log — this is where API errors land
+            # because the CLI prints them on stdout (which the SDK's
+            # stream-json parser then chokes on). Pull the last error
+            # lines so we finally see what's actually breaking.
+            debug_tail = ""
+            try:
+                if sdk_debug_log.exists():
+                    raw = sdk_debug_log.read_text(errors="replace")
+                    err_lines = [
+                        ln for ln in raw.splitlines()
+                        if "[ERROR]" in ln or "API error" in ln or "API Error" in ln
+                    ]
+                    debug_tail = "\n".join(err_lines[-10:]) or raw.splitlines()[-10:][-10:]
+                    if isinstance(debug_tail, list):
+                        debug_tail = "\n".join(debug_tail)
+            except Exception as read_e:
+                debug_tail = f"(could not read debug log: {read_e})"
+
             logger.warning(
                 f"OAuth agent failed ({type(e).__name__}: {e}); session={session_id[:8]} "
-                f"stderr-tail:\n{captured_stderr}"
+                f"stderr-tail:\n{captured_stderr}\n"
+                f"debug-tail:\n{debug_tail or '(empty)'}"
             )
             meta["oauth_error"] = f"{type(e).__name__}: {e}"
             meta["stderr_tail"] = captured_stderr
+            meta["debug_tail"] = debug_tail
             # Mark the speaker as having hit a failure — the next turn
             # will route up one tier (failure-recency bump in select()).
             _record_tool_failure(speaker)
+        finally:
+            # Rotate SDK debug logs — keep the most recent 50, delete older.
+            try:
+                debug_files = sorted(sdk_debug_dir.glob("*.log"),
+                                     key=lambda p: p.stat().st_mtime, reverse=True)
+                for stale in debug_files[50:]:
+                    stale.unlink(missing_ok=True)
+            except Exception:
+                pass
 
     # No API fallback — Casey wants everything on OAuth. If the SDK call
     # failed, surface the failure honestly so we can fix the root cause
