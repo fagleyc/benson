@@ -778,11 +778,17 @@ async def rate_recipe(id: int, rating: float, comments: str | None = None) -> di
 
 
 # ─── Chore writes ────────────────────────────────────────────────────────
+_VALID_RECURRING_CHORE = {"daily", "weekly", "weekdays", "weekends"}
+
+
 @_register(
     "add_chore",
     "Add a new chore to the chores table. Person should be 'Cole', "
     "'Zander', or 'General' (household-wide). Date defaults to today "
-    "if omitted.",
+    "if omitted. Set `recurring` for chores that should regenerate on "
+    "a schedule — the nightly job (4am) spawns the next instance "
+    "automatically when the current one is checked off, AND undone "
+    "chores roll forward to the next day instead of vanishing.",
     {
         "type": "object",
         "properties": {
@@ -792,22 +798,30 @@ async def rate_recipe(id: int, rating: float, comments: str | None = None) -> di
                 "type": "string",
                 "description": "ISO date (YYYY-MM-DD). Defaults to today.",
             },
+            "recurring": {
+                "type": "string",
+                "enum": ["daily", "weekly", "weekdays", "weekends"],
+                "description": "Optional. Omit for one-off chores.",
+            },
         },
         "required": ["person", "chore_name"],
     },
 )
 async def add_chore(
-    person: str, chore_name: str, chore_date: str | None = None
+    person: str, chore_name: str, chore_date: str | None = None,
+    recurring: str | None = None,
 ) -> dict:
     cd = chore_date or date.today().isoformat()
+    if recurring and recurring not in _VALID_RECURRING_CHORE:
+        return {"ok": False, "error": f"recurring must be one of {sorted(_VALID_RECURRING_CHORE)} or omitted"}
     row = await asyncio.to_thread(
         _write_returning,
         """
-        INSERT INTO chores (person, chore_name, chore_date, done)
-        VALUES (%s, %s, %s, FALSE)
-        RETURNING id, person, chore_name, chore_date, done
+        INSERT INTO chores (person, chore_name, chore_date, done, recurring)
+        VALUES (%s, %s, %s, FALSE, %s)
+        RETURNING id, person, chore_name, chore_date, done, recurring
         """,
-        (person, chore_name, cd),
+        (person, chore_name, cd, recurring),
     )
     return {"ok": True, "chore": row}
 
@@ -847,8 +861,9 @@ async def delete_chore(id: int) -> dict:
 
 @_register(
     "update_chore",
-    "Edit an existing chore's person / name / date. Only pass fields "
-    "to change.",
+    "Edit an existing chore's person / name / date / recurrence. Only "
+    "pass fields you want to change. Set recurring='' or null to make "
+    "an existing recurring chore one-off.",
     {
         "type": "object",
         "properties": {
@@ -856,12 +871,24 @@ async def delete_chore(id: int) -> dict:
             "person": {"type": "string"},
             "chore_name": {"type": "string"},
             "chore_date": {"type": "string", "description": "ISO YYYY-MM-DD"},
+            "recurring": {
+                "type": ["string", "null"],
+                "enum": ["daily", "weekly", "weekdays", "weekends", None, ""],
+                "description": "Schedule, or null/'' to clear.",
+            },
         },
         "required": ["id"],
     },
 )
 async def update_chore(id: int, **fields) -> dict:
-    fields = {k: v for k, v in fields.items() if v is not None}
+    # Normalise recurring: empty string means "clear it" (set to NULL).
+    if "recurring" in fields:
+        v = fields["recurring"]
+        if v in ("", None):
+            fields["recurring"] = None
+        elif v not in _VALID_RECURRING_CHORE:
+            return {"ok": False, "error": f"recurring must be one of {sorted(_VALID_RECURRING_CHORE)} / null / ''"}
+    fields = {k: v for k, v in fields.items() if k == "recurring" or v is not None}
     if not fields:
         return {"ok": False, "error": "no fields to update"}
     cols = ", ".join(f"{k} = %s" for k in fields)

@@ -64,6 +64,10 @@
                           onclick="toggleChore({{ c.id }}, this)">{% if c.done %}✓{% else %}○{% endif %}</button>
                   <span class="chore-name{% if c.done %} done{% endif %}"
                         ondblclick="editChore({{ c.id }}, this)">{{ c.chore_name }}</span>
+                  {% if c.recurring %}
+                    <span class="badge bg-info text-dark" title="Recurring: {{ c.recurring }}"
+                          ondblclick="editRecurring({{ c.id }}, this)" style="cursor:pointer;font-size:.65rem">↻ {{ c.recurring }}</span>
+                  {% endif %}
                   <button class="chore-del" onclick="deleteChore({{ c.id }}, this)" title="Delete">×</button>
                 </div>
               {% endfor %}
@@ -71,6 +75,13 @@
               <div class="chore-add-form" id="addform-{{ p }}-{{ dstr }}" style="display:none">
                 <input type="text" class="form-control form-control-sm bg-dark text-light border-secondary mb-1"
                        placeholder="Chore name" data-add-input>
+                <select class="form-select form-select-sm bg-dark text-light border-secondary mb-1" data-add-recurring>
+                  <option value="">One-off</option>
+                  <option value="daily">Daily</option>
+                  <option value="weekdays">Weekdays</option>
+                  <option value="weekends">Weekends</option>
+                  <option value="weekly">Weekly</option>
+                </select>
                 <div class="d-flex gap-1">
                   <button class="btn btn-sm btn-warning flex-fill"
                           onclick="addChore('{{ p }}','{{ dstr }}', this)">Add</button>
@@ -134,16 +145,36 @@ function hideAdd(person, dstr) {
 async function addChore(person, dstr, btn) {
   const f = btn.closest('.chore-add-form');
   const input = f.querySelector('[data-add-input]');
+  const recurringSel = f.querySelector('[data-add-recurring]');
   const name = input.value.trim();
   if (!name) { input.focus(); return; }
   btn.disabled = true;
+  const body = {person: person, chore_name: name, chore_date: dstr};
+  if (recurringSel && recurringSel.value) body.recurring = recurringSel.value;
   const r = await fetch('/api/chores', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({person: person, chore_name: name, chore_date: dstr}),
+    body: JSON.stringify(body),
   });
   btn.disabled = false;
   if (!r.ok) { alert('add failed: ' + await r.text()); return; }
+  location.reload();
+}
+
+async function editRecurring(id, badge) {
+  const current = badge.textContent.trim().replace('↻', '').trim();
+  const next = prompt(
+    'Recurring schedule (one of: daily, weekdays, weekends, weekly, or empty for one-off):',
+    current
+  );
+  if (next === null) return;
+  const value = next.trim().toLowerCase();
+  const r = await fetch('/api/chores/' + id + '/update', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({recurring: value || null}),
+  });
+  if (!r.ok) { alert('update failed: ' + await r.text()); return; }
   location.reload();
 }
 

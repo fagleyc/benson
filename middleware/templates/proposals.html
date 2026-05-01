@@ -32,8 +32,10 @@
         <code>{{ p.branch }}</code> · {{ p.date }} ·
         {% if p.sdk_commit_count is defined %}
           {{ p.sdk_commit_count }} code commit{% if p.sdk_commit_count != 1 %}s{% endif %}
-          {% if p.sdk_commit_count == 0 %}
-            <span class="badge bg-warning text-dark ms-1">SDK didn't commit — likely crashed</span>
+          {% if p.in_flight %}
+            <span class="badge bg-info text-dark ms-1">SDK in flight — composing fix…</span>
+          {% elif p.sdk_commit_count == 0 %}
+            <span class="badge bg-warning text-dark ms-1">SDK didn't commit — likely crashed or still working</span>
           {% endif %}
         {% else %}
           {{ p.commit_count }} commit{% if p.commit_count != 1 %}s{% endif %}
@@ -52,10 +54,17 @@
               onclick="toggleDiff('{{ p.branch }}', {{ loop.index }})">
         View diff
       </button>
-      <button class="btn btn-sm btn-success"
-              onclick="merge('{{ p.branch }}', {{ loop.index }})">
-        Merge + restart
-      </button>
+      {% if p.in_flight or p.sdk_commit_count == 0 %}
+        <button class="btn btn-sm btn-secondary" disabled
+                title="{% if p.in_flight %}SDK is still composing the fix — wait for it to finish before merging{% else %}No code commits on this branch yet — only the metadata. Reject if stuck.{% endif %}">
+          Merge + restart
+        </button>
+      {% else %}
+        <button class="btn btn-sm btn-success"
+                onclick="merge('{{ p.branch }}', {{ loop.index }})">
+          Merge + restart
+        </button>
+      {% endif %}
       <button class="btn btn-sm btn-outline-danger"
               onclick="reject('{{ p.branch }}', {{ loop.index }})">
         Reject

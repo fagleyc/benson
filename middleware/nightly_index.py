@@ -88,8 +88,77 @@ async def _generate_digest(activity: dict) -> str:
     return await ask(prompt, base, model="sonnet", timeout_s=180)
 
 
+def rollover_chores() -> dict:
+    """Push undone chores from prior days forward to today, and spawn
+    fresh undone copies of recurring chores whose latest instance
+    landed before today. Idempotent — running it multiple times in
+    one day is safe (the second pass finds no stale rows + no missing
+    recurring spawns).
+
+    Two distinct moves:
+      1. Stale undone chores: chore_date < today AND done=FALSE → bump
+         chore_date to today. The user sees them on today's list
+         instead of them silently vanishing from view.
+      2. Recurring spawn: for each (person, chore_name, recurring) that
+         has no incomplete instance scheduled for today or later, drop
+         a new undone row dated today (or the next applicable day for
+         weekdays/weekends).
+    """
+    import psycopg2
+    from datetime import date as _d, timedelta as _td
+    from config import PG_DSN
+
+    today = _d.today()
+    rolled = 0
+    spawned = 0
+
+    with psycopg2.connect(**PG_DSN) as c, c.cursor() as cur:
+        cur.execute(
+            "UPDATE chores SET chore_date = %s "
+            "WHERE done = FALSE AND chore_date IS NOT NULL "
+            "AND chore_date < %s",
+            (today, today),
+        )
+        rolled = cur.rowcount
+
+        cur.execute(
+            "SELECT DISTINCT person, chore_name, recurring "
+            "FROM chores WHERE recurring IS NOT NULL"
+        )
+        schedules = cur.fetchall()
+        for person, chore_name, recurring in schedules:
+            cur.execute(
+                "SELECT 1 FROM chores "
+                "WHERE person = %s AND chore_name = %s AND recurring = %s "
+                "  AND chore_date >= %s LIMIT 1",
+                (person, chore_name, recurring, today),
+            )
+            if cur.fetchone():
+                continue
+            d = today
+            if recurring == "weekdays":
+                while d.weekday() >= 5:
+                    d += _td(days=1)
+            elif recurring == "weekends":
+                while d.weekday() < 5:
+                    d += _td(days=1)
+            cur.execute(
+                "INSERT INTO chores (person, chore_name, chore_date, done, recurring) "
+                "VALUES (%s, %s, %s, FALSE, %s)",
+                (person, chore_name, d, recurring),
+            )
+            spawned += 1
+        c.commit()
+
+    return {"rolled_forward": rolled, "recurring_spawned": spawned, "today": today.isoformat()}
+
+
 async def main():
     from memory_index import reindex_all
+    logger.info("nightly: rolling chores forward")
+    chore_stats = await asyncio.to_thread(rollover_chores)
+    logger.info(f"nightly: chores {chore_stats}")
+
     logger.info("nightly: reindexing deep memory")
     counts = await asyncio.to_thread(reindex_all)
     logger.info(f"nightly: indexed {counts}")

@@ -149,6 +149,18 @@ async def today_dashboard() -> dict[str, Any]:
 
 
 # ─── Chores ──────────────────────────────────────────────────────────────
+_VALID_RECURRING = {"daily", "weekly", "weekdays", "weekends"}
+
+
+def _normalize_recurring(value):
+    if value in (None, "", "none", "null"):
+        return None
+    v = str(value).strip().lower()
+    if v not in _VALID_RECURRING:
+        raise HTTPException(400, f"recurring must be null or one of {sorted(_VALID_RECURRING)}")
+    return v
+
+
 @router.get("/chores")
 async def list_chores(
     person: str | None = None,
@@ -161,28 +173,76 @@ async def list_chores(
         where.append("LOWER(person) = LOWER(%s)")
         params.append(person)
     if when == "today":
-        where.append("(chore_date = %s OR chore_date IS NULL)")
-        params.append(today)
+        # Surface incomplete chores from prior days too — they "roll
+        # over" visually until the nightly job at 4am moves their
+        # chore_date forward. Without this, a chore added Monday but
+        # not finished would silently vanish from Tuesday's view.
+        where.append(
+            "(chore_date = %s "
+            " OR chore_date IS NULL "
+            " OR (chore_date < %s AND done = FALSE))"
+        )
+        params.extend([today, today])
     elif when == "open":
         where.append("done = FALSE")
-    sql = "SELECT id, person, chore_date, chore_name, done FROM chores"
+    sql = "SELECT id, person, chore_date, chore_name, done, recurring FROM chores"
     if where:
         sql += " WHERE " + " AND ".join(where)
-    sql += " ORDER BY done, person, chore_name"
+    sql += " ORDER BY done, chore_date NULLS LAST, person, chore_name"
     rows = await asyncio.to_thread(_query, sql, tuple(params))
     return {"chores": rows, "count": len(rows)}
 
 
 @router.post("/chores/{chore_id}/toggle")
 async def toggle_chore(chore_id: int) -> dict[str, Any]:
+    """Toggle done. If the chore is recurring AND we're flipping to done,
+    spawn a fresh undone copy for the next applicable date so the
+    cycle continues without manual re-creation."""
     row = await asyncio.to_thread(
         _query_one,
-        "UPDATE chores SET done = NOT done WHERE id = %s RETURNING id, done",
+        "UPDATE chores SET done = NOT done WHERE id = %s "
+        "RETURNING id, person, chore_name, chore_date, done, recurring",
         (chore_id,),
     )
     if not row:
         raise HTTPException(404, "chore not found")
-    return row
+
+    spawned = None
+    if row.get("done") and row.get("recurring"):
+        next_date = _next_recurring_date(
+            row.get("chore_date") or date.today(), row["recurring"]
+        )
+        spawned = await asyncio.to_thread(
+            _query_one,
+            """
+            INSERT INTO chores (person, chore_name, chore_date, done, recurring)
+            VALUES (%s, %s, %s, FALSE, %s)
+            RETURNING id, person, chore_name, chore_date, done, recurring
+            """,
+            (row["person"], row["chore_name"], next_date, row["recurring"]),
+        )
+    return {**row, "spawned_next": spawned}
+
+
+def _next_recurring_date(from_date: date, recurring: str) -> date:
+    """Return the next chore_date for a given recurrence. Always strictly
+    after from_date so a same-day toggle doesn't re-create today."""
+    from datetime import timedelta as _td
+    d = from_date + _td(days=1)
+    if recurring == "daily":
+        return d
+    if recurring == "weekly":
+        return from_date + _td(days=7)
+    if recurring == "weekdays":
+        # Skip Saturday (5) and Sunday (6) until we land on a weekday.
+        while d.weekday() >= 5:
+            d += _td(days=1)
+        return d
+    if recurring == "weekends":
+        while d.weekday() < 5:
+            d += _td(days=1)
+        return d
+    return d
 
 
 @router.post("/chores")
@@ -191,16 +251,17 @@ async def create_chore(request: Request) -> dict[str, Any]:
     person = (body.get("person") or "").strip()
     chore_name = (body.get("chore_name") or "").strip()
     chore_date = body.get("chore_date") or None
+    recurring = _normalize_recurring(body.get("recurring"))
     if not person or not chore_name:
         raise HTTPException(400, "person and chore_name required")
     row = await asyncio.to_thread(
         _query_one,
         """
-        INSERT INTO chores (person, chore_name, chore_date, done)
-        VALUES (%s, %s, %s, FALSE)
-        RETURNING id, person, chore_name, chore_date, done
+        INSERT INTO chores (person, chore_name, chore_date, done, recurring)
+        VALUES (%s, %s, %s, FALSE, %s)
+        RETURNING id, person, chore_name, chore_date, done, recurring
         """,
-        (person, chore_name, chore_date),
+        (person, chore_name, chore_date, recurring),
     )
     return row or {}
 
@@ -224,13 +285,16 @@ async def update_chore_route(chore_id: int, request: Request) -> dict[str, Any]:
     for k in ("chore_name", "person", "chore_date", "done"):
         if k in body:
             fields[k] = body[k]
+    if "recurring" in body:
+        fields["recurring"] = _normalize_recurring(body["recurring"])
     if not fields:
         raise HTTPException(400, "no fields to update")
     cols = ", ".join(f"{k} = %s" for k in fields)
     params = list(fields.values()) + [chore_id]
     row = await asyncio.to_thread(
         _query_one,
-        f"UPDATE chores SET {cols} WHERE id = %s RETURNING id, person, chore_name, chore_date, done",
+        f"UPDATE chores SET {cols} WHERE id = %s "
+        f"RETURNING id, person, chore_name, chore_date, done, recurring",
         tuple(params),
     )
     if not row:

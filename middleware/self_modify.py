@@ -490,6 +490,20 @@ async def _propose_change_locked(rationale: str, instructions: str) -> dict:
     full_transcript: list[str] = []
     sdk_error: str | None = None
 
+    # In-flight marker: the meta commit is on the branch BEFORE the SDK
+    # runs, so the proposal shows on /admin/proposals immediately. To
+    # prevent Casey from merging a meta-only branch while the SDK is
+    # still composing the actual fix (the 2026-05-01 chore-recurring
+    # incident), drop a marker file and have list_open_proposals + the
+    # template hide the merge button while it exists.
+    inflight_marker = PROPOSAL_LOG_DIR / f"{branch.replace('/', '_')}.inflight"
+    try:
+        inflight_marker.write_text(
+            f"started={datetime.now(timezone.utc).isoformat()}\nbranch={branch}\n"
+        )
+    except Exception as e:
+        logger.warning(f"could not write inflight marker: {e}")
+
     async def _run():
         async for msg in query(prompt=full_prompt, options=options):
             if isinstance(msg, AssistantMessage):
@@ -505,6 +519,12 @@ async def _propose_change_locked(rationale: str, instructions: str) -> dict:
     except Exception as e:
         sdk_error = f"{type(e).__name__}: {e}"
         logger.warning(f"propose_change SDK failed: {sdk_error}")
+    finally:
+        # Clear the in-flight marker so the dashboard re-enables Merge.
+        try:
+            inflight_marker.unlink(missing_ok=True)
+        except Exception:
+            pass
 
     transcript_blob = "\n\n".join(full_transcript)
     _append_log("--- SDK transcript ---")
@@ -576,9 +596,47 @@ async def _propose_change_locked(rationale: str, instructions: str) -> dict:
 def apply_proposal(branch: str) -> dict:
     """Run scripts/apply_proposal.sh <branch>. Returns stdout/stderr +
     exit code. Called from the FastAPI handler when Casey clicks merge.
+    Refuses if the proposal's SDK session is still in-flight or if the
+    branch contains only the meta commit (no actual code changes).
     """
     if not branch.startswith("proposal/"):
         return {"ok": False, "error": "branch must start with 'proposal/'"}
+
+    # Refuse if the SDK is still composing the fix.
+    marker = PROPOSAL_LOG_DIR / f"{branch.replace('/', '_')}.inflight"
+    if marker.exists():
+        return {
+            "ok": False,
+            "error": (
+                "SDK session is still in-flight for this proposal — the "
+                "actual fix code hasn't been committed yet. Wait for the "
+                "session to finish (the dashboard refreshes every 30s), "
+                "then merge."
+            ),
+        }
+
+    # Refuse if there are no SDK commits beyond the meta — there's
+    # literally nothing to merge except a JSON metadata file. The
+    # 2026-05-01 chore-recurring incident merged exactly this and got
+    # nothing.
+    try:
+        log_out = _git(["log", f"main..{branch}", "--oneline"])
+        non_meta_commits = [
+            ln for ln in log_out.splitlines()
+            if ln.strip() and PROPOSAL_META_TAG not in ln
+        ]
+        if not non_meta_commits:
+            return {
+                "ok": False,
+                "error": (
+                    "this proposal has no code commits — only the "
+                    "metadata commit is on the branch. The SDK session "
+                    "either crashed or is still working. Reject the "
+                    "branch and re-prompt Benson if it's stuck."
+                ),
+            }
+    except Exception as e:
+        logger.warning(f"apply_proposal could not enumerate commits: {e}")
     try:
         out = subprocess.run(
             [str(APPLY_SCRIPT), branch],
@@ -659,6 +717,12 @@ def list_open_proposals() -> list[dict]:
         # branches that only contain metadata are clearly visible as such.
         sdk_commit_count = max(0, commit_count - (1 if rationale else 0))
 
+        # In-flight marker: SDK still composing? Hide the merge button on
+        # the dashboard until the marker disappears (cleared in the
+        # propose_change finally block when SDK exits).
+        marker = PROPOSAL_LOG_DIR / f"{branch.replace('/', '_')}.inflight"
+        in_flight = marker.exists()
+
         proposals.append({
             "branch": branch,
             "date": date_s,
@@ -668,6 +732,7 @@ def list_open_proposals() -> list[dict]:
             "sdk_commit_count": sdk_commit_count,
             "rationale": rationale,
             "instructions": instructions,
+            "in_flight": in_flight,
         })
     return proposals
 
