@@ -405,7 +405,12 @@ async def set_volume(entity_id: str, level: float) -> dict:
     "Speak a short message through a Sonos zone using Piper TTS. The "
     "message should be 1-3 sentences of plain spoken text — no markdown, "
     "no stage directions, no asterisks. Use this whenever the household "
-    "should hear something out loud.",
+    "should hear something out loud. To play the same announcement in "
+    "sync on multiple Sonos zones, pass the additional zone entity ids "
+    "in `also_play_on` — the function will temporarily group them under "
+    "`zone_entity_id`, play once, then ungroup. Prefer this over "
+    "per-zone announce loops for 'all speakers / everywhere / whole "
+    "house' requests.",
     {
         "type": "object",
         "properties": {
@@ -417,13 +422,113 @@ async def set_volume(entity_id: str, level: float) -> dict:
                 "type": "string",
                 "description": "Plain spoken text. 1-3 sentences max.",
             },
+            "also_play_on": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": (
+                    "Optional. Additional media_player.* zone entity ids to "
+                    "play this announcement on in lockstep with "
+                    "`zone_entity_id`. The zones are temporarily joined "
+                    "under `zone_entity_id` (the coordinator), the message "
+                    "plays once, then they are ungrouped."
+                ),
+            },
         },
         "required": ["zone_entity_id", "message"],
     },
 )
-async def announce(zone_entity_id: str, message: str) -> dict:
+async def announce(
+    zone_entity_id: str,
+    message: str,
+    also_play_on: list[str] | None = None,
+) -> dict:
     from kokoro_tts import speak_on_zone
-    return await speak_on_zone(zone_entity_id, message)
+
+    if not also_play_on:
+        return await speak_on_zone(zone_entity_id, message)
+
+    # Multi-zone synced announcement: join → play once → unjoin.
+    await ha_call_service(
+        "media_player",
+        "join",
+        {"entity_id": zone_entity_id, "group_members": also_play_on},
+    )
+    try:
+        await asyncio.sleep(0.7)  # let the group settle before playback
+        result = await speak_on_zone(zone_entity_id, message)
+    finally:
+        await asyncio.sleep(0.3)
+        try:
+            await ha_call_service(
+                "media_player",
+                "unjoin",
+                {"entity_id": [zone_entity_id, *also_play_on]},
+            )
+        except Exception:
+            logger.exception("unjoin failed after grouped announce")
+
+    if isinstance(result, dict):
+        result = {**result, "grouped_with": list(also_play_on)}
+    return result
+
+
+@_register(
+    "group_sonos",
+    "Group Sonos speakers so they play in sync. The coordinator is the "
+    "speaker that drives playback; members mirror it bit-perfect. Use "
+    "this BEFORE announce/play_music when the user wants 'all speakers "
+    "/ everywhere / the whole house' to play synced. Pair with "
+    "ungroup_sonos afterward to release the group.",
+    {
+        "type": "object",
+        "properties": {
+            "coordinator": {
+                "type": "string",
+                "description": (
+                    "HA media_player entity id that will drive playback, "
+                    "e.g. 'media_player.kitchen'."
+                ),
+            },
+            "members": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Entity ids to join under the coordinator.",
+            },
+        },
+        "required": ["coordinator", "members"],
+        "additionalProperties": False,
+    },
+)
+async def group_sonos(coordinator: str, members: list[str]) -> dict:
+    await ha_call_service(
+        "media_player",
+        "join",
+        {"entity_id": coordinator, "group_members": members},
+    )
+    return {"ok": True, "coordinator": coordinator, "members": members}
+
+
+@_register(
+    "ungroup_sonos",
+    "Release Sonos speakers from a temporary group, returning each to "
+    "independent playback. Call this after a synced announcement or "
+    "grouped playback finishes.",
+    {
+        "type": "object",
+        "properties": {
+            "members": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Entity ids to detach from their current group.",
+            },
+        },
+        "required": ["members"],
+        "additionalProperties": False,
+    },
+)
+async def ungroup_sonos(members: list[str]) -> dict:
+    await ha_call_service("media_player", "unjoin", {"entity_id": members})
+    return {"ok": True, "members": members}
 
 
 # ─── Data lookups ────────────────────────────────────────────────────────
