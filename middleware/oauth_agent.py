@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 import uuid
 from datetime import datetime
@@ -67,13 +68,34 @@ def _load_speaker_memory(speaker: str | None) -> str:
     return "\n\n".join(chunks)
 
 
+# Trivial inputs that don't benefit from semantic memory retrieval —
+# acks, simple greetings, confirmations. Skipping the embed + pgvector
+# round-trip saves ~100-200ms on these turns. Functionality unchanged:
+# LTM is auxiliary context, never load-bearing.
+_LTM_SKIP_RE = re.compile(
+    r"^\s*("
+    r"yes|yep|yeah|sure|ok|okay|cool|great|thanks|thank you|"
+    r"no|nope|nah|stop|cancel|"
+    r"hi|hey|hello|good morning|good night|bye|goodbye|"
+    r"got it|sounds good|never mind|nvm"
+    r")\W*$",
+    re.IGNORECASE,
+)
+
+
 def _relevant_ltm(user_text: str, k: int = 5, max_distance: float = 0.30) -> str:
     """Semantic-search the LTM (memory_index pgvector table) for memories
     relevant to this turn's user_text, and format as a system-prompt
-    section. Returns '' if nothing relevant or on any failure — this
-    must NEVER block the agent loop.
+    section. Returns '' if nothing relevant, the input is too short to
+    be informative, or on any failure — this must NEVER block the
+    agent loop.
     """
-    if not user_text or len(user_text.strip()) < 4:
+    if not user_text:
+        return ""
+    s = user_text.strip()
+    # Skip very short inputs and trivial acks — embedding "ok" against
+    # 1000+ memories produces noise, not signal.
+    if len(s) < 12 or _LTM_SKIP_RE.match(s):
         return ""
     try:
         import psycopg2
