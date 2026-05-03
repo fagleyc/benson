@@ -25,6 +25,12 @@ CREATE TABLE IF NOT EXISTS chore_templates (
 );
 CREATE INDEX IF NOT EXISTS chore_templates_person_idx ON chore_templates(person);
 
+-- Grant the benson app role access — without this, /api/chore-templates
+-- returns 500 ("permission denied for table chore_templates") and the
+-- autocomplete dropdown silently fails. Hit this on 2026-05-03.
+GRANT ALL ON TABLE chore_templates TO benson;
+GRANT USAGE, SELECT ON SEQUENCE chore_templates_id_seq TO benson;
+
 -- Seed from history (idempotent — re-runs upsert use_count + archived_at).
 INSERT INTO chore_templates (person, chore_name, use_count, archived_at)
 SELECT
