@@ -19,14 +19,22 @@ from pathlib import Path
 
 sys.path.insert(0, "/opt/benson/middleware")
 
+# systemd already sets env from /etc/benson/env via the unit's
+# EnvironmentFile directive, so we only do the manual load when the
+# script is invoked outside systemd (interactive testing). Skip
+# silently on PermissionError — that's the expected case under the
+# `casey` user since the env file is root-only.
 ENV_FILE = Path("/etc/benson/env")
 if ENV_FILE.exists():
-    for line in ENV_FILE.read_text().splitlines():
-        line = line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        k, _, v = line.partition("=")
-        os.environ.setdefault(k.strip(), v.strip())
+    try:
+        for line in ENV_FILE.read_text().splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, _, v = line.partition("=")
+            os.environ.setdefault(k.strip(), v.strip())
+    except PermissionError:
+        pass
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger("benson.sunday_chores")
