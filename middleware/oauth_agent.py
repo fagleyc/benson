@@ -349,7 +349,14 @@ async def run_agent(
             allowed_tools=ALLOWED_TOOL_NAMES,
             permission_mode="bypassPermissions",
             model=_MODEL_FOR_TIER.get(choice.tier, "haiku"),
-            max_turns=8,
+            # Each tool call counts as a turn. Compositional asks
+            # (ToolSearch → discovered_tool → side-effect tool) routinely
+            # spent 6-10 turns; max_turns=8 caused the sporadic exit-1
+            # crashes Casey hit on 2026-05-02 (4 in one day, all on
+            # turns where the agent had work left). Bumping to 20.
+            # Bounded above by timeout_s=240s so a runaway loop is
+            # still killed by the wall clock.
+            max_turns=20,
             session_id=session_id,
             stderr=_stderr_cb,
             extra_args={"debug-file": str(sdk_debug_log)},

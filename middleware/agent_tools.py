@@ -89,7 +89,7 @@ def _register(
                 "description": "What to do.",
             },
             "brightness_pct": {
-                "type": "integer",
+                "type": ["integer", "string"],
                 "minimum": 1,
                 "maximum": 100,
                 "description": "Required when action='on' or 'set_brightness'. 100 = full.",
@@ -299,7 +299,7 @@ async def play_music(query: str, room: str, content_type: str = "playlist") -> d
     {
         "type": "object",
         "properties": {
-            "limit": {"type": "integer", "default": 50, "minimum": 1, "maximum": 200},
+            "limit": {"type": ["integer", "string"], "default": 50, "minimum": 1, "maximum": 200},
             "favorite": {"type": "boolean", "default": False},
         },
     },
@@ -546,7 +546,7 @@ async def ungroup_sonos(members: list[str]) -> dict:
                 "type": "string",
                 "description": "Optional: 'Main', 'Sauce', 'Other', etc.",
             },
-            "limit": {"type": "integer", "default": 10, "minimum": 1, "maximum": 30},
+            "limit": {"type": ["integer", "string"], "default": 10, "minimum": 1, "maximum": 30},
         },
         "required": ["query"],
     },
@@ -574,7 +574,7 @@ async def search_recipes(query: str, course: str | None = None, limit: int = 10)
     "Fetch full ingredients and steps for one recipe by id.",
     {
         "type": "object",
-        "properties": {"id": {"type": "integer"}},
+        "properties": {"id": {"type": ["integer", "string"]}},
         "required": ["id"],
     },
 )
@@ -628,7 +628,7 @@ async def lookup_chores(person: str | None = None, when: str = "today") -> dict:
     {
         "type": "object",
         "properties": {
-            "days_ahead": {"type": "integer", "default": 7, "minimum": 1, "maximum": 30}
+            "days_ahead": {"type": ["integer", "string"], "default": 7, "minimum": 1, "maximum": 30}
         },
     },
 )
@@ -684,7 +684,7 @@ async def get_weather() -> dict:
         "type": "object",
         "properties": {
             "query": {"type": "string"},
-            "limit": {"type": "integer", "default": 8, "minimum": 1, "maximum": 30},
+            "limit": {"type": ["integer", "string"], "default": 8, "minimum": 1, "maximum": 30},
         },
         "required": ["query"],
     },
@@ -763,7 +763,7 @@ def _write_returning(sql: str, params: tuple = ()) -> dict | None:
                 "description": "Ordered cooking steps.",
             },
             "course": {"type": "string", "description": "Main / Side / Sauce / Other"},
-            "prep_time": {"type": "integer", "description": "Total minutes."},
+            "prep_time": {"type": ["integer", "string"], "description": "Total minutes."},
             "tags": {"type": "array", "items": {"type": "string"}},
             "notes": {"type": "string"},
             "source_url": {"type": "string"},
@@ -816,10 +816,10 @@ async def add_recipe(
     {
         "type": "object",
         "properties": {
-            "id": {"type": "integer"},
+            "id": {"type": ["integer", "string"]},
             "title": {"type": "string"},
             "course": {"type": "string"},
-            "prep_time": {"type": "integer"},
+            "prep_time": {"type": ["integer", "string"]},
             "notes": {"type": "string"},
             "user_rating": {"type": "number", "minimum": 0, "maximum": 5},
             "user_comments": {"type": "string"},
@@ -847,7 +847,7 @@ async def update_recipe(id: int, **fields) -> dict:
     "calling — this is irreversible.",
     {
         "type": "object",
-        "properties": {"id": {"type": "integer"}},
+        "properties": {"id": {"type": ["integer", "string"]}},
         "required": ["id"],
     },
 )
@@ -866,7 +866,7 @@ async def delete_recipe(id: int) -> dict:
     {
         "type": "object",
         "properties": {
-            "id": {"type": "integer"},
+            "id": {"type": ["integer", "string"]},
             "rating": {"type": "number", "minimum": 0, "maximum": 5},
             "comments": {"type": "string"},
         },
@@ -937,7 +937,7 @@ async def add_chore(
     {
         "type": "object",
         "properties": {
-            "id": {"type": "integer"},
+            "id": {"type": ["integer", "string"]},
             "done": {"type": "boolean", "default": True},
         },
         "required": ["id"],
@@ -955,7 +955,7 @@ async def mark_chore_done(id: int, done: bool = True) -> dict:
     "Permanently delete a chore by id.",
     {
         "type": "object",
-        "properties": {"id": {"type": "integer"}},
+        "properties": {"id": {"type": ["integer", "string"]}},
         "required": ["id"],
     },
 )
@@ -972,7 +972,7 @@ async def delete_chore(id: int) -> dict:
     {
         "type": "object",
         "properties": {
-            "id": {"type": "integer"},
+            "id": {"type": ["integer", "string"]},
             "person": {"type": "string"},
             "chore_name": {"type": "string"},
             "chore_date": {"type": "string", "description": "ISO YYYY-MM-DD"},
@@ -1013,7 +1013,7 @@ async def update_chore(id: int, **fields) -> dict:
         "type": "object",
         "properties": {
             "plan_date": {"type": "string", "description": "ISO YYYY-MM-DD"},
-            "recipe_id": {"type": "integer"},
+            "recipe_id": {"type": ["integer", "string"]},
             "status": {
                 "type": "string",
                 "default": "planned",
@@ -1063,7 +1063,7 @@ async def unschedule_meal(plan_date: str) -> dict:
     "to forget something. Confirm before calling — irreversible.",
     {
         "type": "object",
-        "properties": {"id": {"type": "integer"}},
+        "properties": {"id": {"type": ["integer", "string"]}},
         "required": ["id"],
     },
 )
@@ -1079,7 +1079,7 @@ async def forget_memory(id: int) -> dict:
     {
         "type": "object",
         "properties": {
-            "id": {"type": "integer"},
+            "id": {"type": ["integer", "string"]},
             "content": {"type": "string"},
             "importance": {"type": "number", "minimum": 0, "maximum": 1},
         },
@@ -1333,8 +1333,8 @@ async def analyze_image(image_path: str, query: str) -> dict:
                 "description": "Optional filter to one source. Omit for everything.",
             },
             "speaker": {"type": "string", "description": "Optional: filter to one person."},
-            "days_back": {"type": "integer", "description": "Optional: only items from the last N days."},
-            "limit": {"type": "integer", "default": 8, "minimum": 1, "maximum": 25},
+            "days_back": {"type": ["integer", "string"], "description": "Optional: only items from the last N days."},
+            "limit": {"type": ["integer", "string"], "default": 8, "minimum": 1, "maximum": 25},
         },
         "required": ["query"],
     },
@@ -1381,7 +1381,7 @@ async def search_history(
     {
         "type": "object",
         "properties": {
-            "duration_min": {"type": "integer", "default": 90, "minimum": 5, "maximum": 180},
+            "duration_min": {"type": ["integer", "string"], "default": 90, "minimum": 5, "maximum": 180},
             "room": {"type": "string", "default": "kitchen"},
             "started_by": {"type": "string", "description": "Speaker who initiated."},
         },
@@ -1407,7 +1407,7 @@ async def listen_in(
     {
         "type": "object",
         "properties": {
-            "session_id": {"type": "integer"},
+            "session_id": {"type": ["integer", "string"]},
         },
     },
 )
@@ -1629,8 +1629,8 @@ async def log_event_tool(
         "properties": {
             "category": {"type": "string", "description": "Category filter (e.g. 'workout')."},
             "person": {"type": "string", "description": "Person filter."},
-            "days_back": {"type": "integer", "description": "Look this many days back (omit for all-time)."},
-            "limit": {"type": "integer", "description": "Max rows (default 50, max 200)."},
+            "days_back": {"type": ["integer", "string"], "description": "Look this many days back (omit for all-time)."},
+            "limit": {"type": ["integer", "string"], "description": "Max rows (default 50, max 200)."},
         },
     },
 )
@@ -1725,7 +1725,7 @@ async def list_all_tool(include_archived: bool = False) -> dict:
         "type": "object",
         "properties": {
             "name": {"type": "string"},
-            "item_id": {"type": "integer"},
+            "item_id": {"type": ["integer", "string"]},
             "done": {"type": "boolean", "description": "True to check off, false to un-check (default true)."},
         },
         "required": ["name", "item_id"],
@@ -1745,7 +1745,7 @@ async def list_check_tool(name: str, item_id: int, done: bool = True) -> dict:
         "type": "object",
         "properties": {
             "name": {"type": "string"},
-            "item_id": {"type": "integer"},
+            "item_id": {"type": ["integer", "string"]},
         },
         "required": ["name", "item_id"],
     },
@@ -1770,7 +1770,7 @@ async def list_remove_tool(name: str, item_id: int) -> dict:
         "type": "object",
         "properties": {
             "user_name": {"type": "string", "description": "Optional. Omit for the whole family."},
-            "days": {"type": "integer", "default": 7, "description": "Days from now to look ahead."},
+            "days": {"type": ["integer", "string"], "default": 7, "description": "Days from now to look ahead."},
             "search": {"type": "string", "description": "Optional case-insensitive title/description filter."},
         },
         "required": [],
@@ -1923,7 +1923,7 @@ async def delete_calendar_event(
         "properties": {
             "user_name": {"type": "string"},
             "query": {"type": "string", "description": "Gmail search query."},
-            "max_results": {"type": "integer", "default": 10},
+            "max_results": {"type": ["integer", "string"], "default": 10},
         },
         "required": ["user_name", "query"],
     },
@@ -2171,7 +2171,7 @@ async def _tool_stm_append(topic: str, content: str) -> dict:
         "type": "object",
         "properties": {
             "topic": {"type": "string", "description": "Optional: today | inbox | <topic name>"},
-            "days_back": {"type": "integer", "default": 1},
+            "days_back": {"type": ["integer", "string"], "default": 1},
         },
         "required": [],
     },
@@ -2216,10 +2216,10 @@ async def _tool_stm_tidy() -> dict:
     {
         "type": "object",
         "properties": {
-            "days_back": {"type": "integer", "default": 7, "minimum": 1, "maximum": 60},
+            "days_back": {"type": ["integer", "string"], "default": 7, "minimum": 1, "maximum": 60},
             "speaker": {"type": "string", "description": "Optional. Filter to one person."},
             "search": {"type": "string", "description": "Optional case-insensitive substring filter on user_text or response."},
-            "limit": {"type": "integer", "default": 50, "minimum": 1, "maximum": 200},
+            "limit": {"type": ["integer", "string"], "default": 50, "minimum": 1, "maximum": 200},
         },
         "required": [],
     },
@@ -2245,7 +2245,7 @@ async def _tool_read_my_conversations(
     {
         "type": "object",
         "properties": {
-            "lines": {"type": "integer", "default": 100, "minimum": 1, "maximum": 500},
+            "lines": {"type": ["integer", "string"], "default": 100, "minimum": 1, "maximum": 500},
             "since": {"type": "string", "description": "Optional. Journalctl-style relative time."},
         },
         "required": [],
@@ -2281,7 +2281,7 @@ async def _tool_list_my_tools() -> dict:
         "type": "object",
         "properties": {
             "path": {"type": "string", "description": "Path relative to /opt/benson or absolute."},
-            "max_lines": {"type": "integer", "default": 400, "minimum": 1, "maximum": 2000},
+            "max_lines": {"type": ["integer", "string"], "default": 400, "minimum": 1, "maximum": 2000},
         },
         "required": ["path"],
     },
@@ -2303,7 +2303,7 @@ async def _tool_read_my_source(path: str, max_lines: int = 400) -> dict:
         "properties": {
             "pattern": {"type": "string", "description": "Python regex."},
             "path_glob": {"type": "string", "default": "**/*.py", "description": "Glob relative to /opt/benson."},
-            "max_results": {"type": "integer", "default": 60, "minimum": 1, "maximum": 300},
+            "max_results": {"type": ["integer", "string"], "default": 60, "minimum": 1, "maximum": 300},
         },
         "required": ["pattern"],
     },
