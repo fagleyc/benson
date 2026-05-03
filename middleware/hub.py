@@ -203,7 +203,8 @@ async def chores_page(request: Request):
     chores = await asyncio.to_thread(
         _query,
         """
-        SELECT id, person, chore_date, chore_name, done
+        SELECT id, person, chore_date, chore_name, done, recurring,
+               dollars, points
         FROM chores
         WHERE chore_date BETWEEN %s AND %s OR chore_date IS NULL
         ORDER BY person, chore_date NULLS LAST, chore_name

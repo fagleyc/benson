@@ -16,7 +16,15 @@
   </div>
 </div>
 
+<!-- Datalists for chore-name autocomplete, populated on page load
+     from /api/chore-templates. Each <input list="templates-X"> on a
+     person's add-form binds to its corresponding datalist. -->
+{% for p in persons %}
+  <datalist id="templates-{{ p }}"></datalist>
+{% endfor %}
+
 <script>
+// Weekly tally banner.
 (async () => {
   try {
     const r = await fetch('/api/rewards/weekly');
@@ -40,6 +48,68 @@
     }
   } catch (e) { /* silent */ }
 })();
+
+// Populate the chore-name autocomplete datalists from the historical
+// catalog. Each person gets their own list; typing in the add-form
+// matches against their own historical chores first.
+//
+// On select, the form's reward field is auto-filled with the
+// template's default value when one is set — saves re-entering $2 for
+// "walk bluey" every time.
+window._choreTemplates = {};
+(async () => {
+  try {
+    const r = await fetch('/api/chore-templates');
+    if (!r.ok) return;
+    const j = await r.json();
+    const byPerson = {};
+    for (const t of (j.templates || [])) {
+      (byPerson[t.person] = byPerson[t.person] || []).push(t);
+      window._choreTemplates[`${t.person.toLowerCase()}|${t.chore_name.toLowerCase()}`] = t;
+    }
+    for (const [person, list] of Object.entries(byPerson)) {
+      const dl = document.getElementById('templates-' + person);
+      if (!dl) continue;
+      // Sort by use_count DESC so popular ones suggest first.
+      list.sort((a, b) => (b.use_count || 0) - (a.use_count || 0));
+      dl.innerHTML = list.map(t => {
+        const dollars = parseFloat(t.default_dollars || 0);
+        const points = parseInt(t.default_points || 0, 10);
+        const reward = dollars > 0 ? `$${dollars.toFixed(2)}` :
+                       points > 0 ? `${points}pts` : '';
+        const used = (t.use_count || 0) > 0 ? ` · ${t.use_count}×` : '';
+        const label = reward ? `${reward}${used}` : `${used.replace(' · ','')}` || '';
+        return `<option value="${t.chore_name.replace(/"/g,'&quot;')}"${label ? ` label="${label}"` : ''}></option>`;
+      }).join('');
+    }
+  } catch (e) { /* silent */ }
+})();
+
+// When the chore-name input matches a template, auto-fill the reward
+// inputs with that template's defaults. Listens on the existing
+// add-form inputs.
+document.querySelectorAll('[data-add-input]').forEach(input => {
+  input.addEventListener('change', () => {
+    const f = input.closest('.chore-add-form');
+    if (!f) return;
+    const id = f.id || '';
+    // addform-Cole-2026-05-03 → person = "Cole"
+    const m = id.match(/^addform-([^-]+)-/);
+    if (!m) return;
+    const person = m[1];
+    const key = `${person.toLowerCase()}|${input.value.trim().toLowerCase()}`;
+    const t = window._choreTemplates[key];
+    if (!t) return;
+    const dollarsInput = f.querySelector('[data-add-dollars]');
+    const pointsInput = f.querySelector('[data-add-points]');
+    if (dollarsInput && !dollarsInput.value && t.default_dollars > 0) {
+      dollarsInput.value = parseFloat(t.default_dollars).toFixed(2);
+    }
+    if (pointsInput && !pointsInput.value && t.default_points > 0) {
+      pointsInput.value = parseInt(t.default_points, 10);
+    }
+  });
+});
 </script>
 
 <style>

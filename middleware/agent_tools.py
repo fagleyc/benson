@@ -593,7 +593,11 @@ async def get_recipe(id: int) -> dict:
 @_register(
     "lookup_chores",
     "Look up the chores table. Filter by person ('Cole' / 'Zander' / "
-    "'General') and/or `when` ('today' / 'open' / 'all').",
+    "'General') and/or `when` ('today' / 'open' / 'all'). Returns "
+    "rewards (dollars for Cole, points for Zander) so when a kid asks "
+    "what they have to do, you can also tell them what each chore "
+    "pays. ALWAYS surface the price when reporting Cole's chores: "
+    "'walk Bluey ($2.50), trash cans ($1)'.",
     {
         "type": "object",
         "properties": {
@@ -610,11 +614,17 @@ async def lookup_chores(person: str | None = None, when: str = "today") -> dict:
         where.append("LOWER(person) = LOWER(%s)")
         params.append(person)
     if when == "today":
-        where.append("(chore_date = %s OR chore_date IS NULL)")
-        params.append(today)
+        where.append(
+            "(chore_date = %s OR chore_date IS NULL "
+            " OR (chore_date < %s AND done = FALSE))"
+        )
+        params.extend([today, today])
     elif when == "open":
         where.append("done = FALSE")
-    sql = "SELECT id, person, chore_date, chore_name, done FROM chores"
+    sql = (
+        "SELECT id, person, chore_date, chore_name, done, recurring, "
+        "dollars, points FROM chores"
+    )
     if where:
         sql += " WHERE " + " AND ".join(where)
     sql += " ORDER BY done, person, chore_name LIMIT 100"
