@@ -245,6 +245,30 @@ def _next_recurring_date(from_date: date, recurring: str) -> date:
     return d
 
 
+def _parse_dollars(v) -> float | None:
+    if v is None or v == "":
+        return None
+    try:
+        d = float(v)
+    except (TypeError, ValueError):
+        raise HTTPException(400, f"dollars must be a number (got {v!r})")
+    if d < 0:
+        raise HTTPException(400, "dollars cannot be negative")
+    return round(d, 2)
+
+
+def _parse_points(v) -> int | None:
+    if v is None or v == "":
+        return None
+    try:
+        p = int(v)
+    except (TypeError, ValueError):
+        raise HTTPException(400, f"points must be an integer (got {v!r})")
+    if p < 0:
+        raise HTTPException(400, "points cannot be negative")
+    return p
+
+
 @router.post("/chores")
 async def create_chore(request: Request) -> dict[str, Any]:
     body = await request.json()
@@ -252,16 +276,18 @@ async def create_chore(request: Request) -> dict[str, Any]:
     chore_name = (body.get("chore_name") or "").strip()
     chore_date = body.get("chore_date") or None
     recurring = _normalize_recurring(body.get("recurring"))
+    dollars = _parse_dollars(body.get("dollars")) or 0
+    points = _parse_points(body.get("points")) or 0
     if not person or not chore_name:
         raise HTTPException(400, "person and chore_name required")
     row = await asyncio.to_thread(
         _query_one,
         """
-        INSERT INTO chores (person, chore_name, chore_date, done, recurring)
-        VALUES (%s, %s, %s, FALSE, %s)
-        RETURNING id, person, chore_name, chore_date, done, recurring
+        INSERT INTO chores (person, chore_name, chore_date, done, recurring, dollars, points)
+        VALUES (%s, %s, %s, FALSE, %s, %s, %s)
+        RETURNING id, person, chore_name, chore_date, done, recurring, dollars, points
         """,
-        (person, chore_name, chore_date, recurring),
+        (person, chore_name, chore_date, recurring, dollars, points),
     )
     return row or {}
 
@@ -287,6 +313,10 @@ async def update_chore_route(chore_id: int, request: Request) -> dict[str, Any]:
             fields[k] = body[k]
     if "recurring" in body:
         fields["recurring"] = _normalize_recurring(body["recurring"])
+    if "dollars" in body:
+        fields["dollars"] = _parse_dollars(body["dollars"]) or 0
+    if "points" in body:
+        fields["points"] = _parse_points(body["points"]) or 0
     if not fields:
         raise HTTPException(400, "no fields to update")
     cols = ", ".join(f"{k} = %s" for k in fields)
@@ -294,12 +324,161 @@ async def update_chore_route(chore_id: int, request: Request) -> dict[str, Any]:
     row = await asyncio.to_thread(
         _query_one,
         f"UPDATE chores SET {cols} WHERE id = %s "
-        f"RETURNING id, person, chore_name, chore_date, done, recurring",
+        f"RETURNING id, person, chore_name, chore_date, done, recurring, dollars, points",
         tuple(params),
     )
     if not row:
         raise HTTPException(404, "chore not found")
     return row
+
+
+# ─── Chore templates (catalog) ──────────────────────────────────────────
+@router.get("/chore-templates")
+async def list_chore_templates(person: str | None = None) -> dict[str, Any]:
+    """Reusable chore catalog. Sorted by use_count DESC so the most-used
+    historical chores surface first. Returned defaults populate the add
+    form on the chores page."""
+    sql = (
+        "SELECT id, person, chore_name, default_dollars, default_points, "
+        "category, use_count, archived_at FROM chore_templates"
+    )
+    params: tuple = ()
+    if person:
+        sql += " WHERE LOWER(person) = LOWER(%s)"
+        params = (person,)
+    sql += " ORDER BY use_count DESC, chore_name LIMIT 200"
+    rows = await asyncio.to_thread(_query, sql, params)
+    return {"templates": rows, "count": len(rows)}
+
+
+@router.post("/chore-templates")
+async def create_chore_template(request: Request) -> dict[str, Any]:
+    body = await request.json()
+    person = (body.get("person") or "").strip()
+    chore_name = (body.get("chore_name") or "").strip().lower()
+    default_dollars = _parse_dollars(body.get("default_dollars")) or 0
+    default_points = _parse_points(body.get("default_points")) or 0
+    category = (body.get("category") or "").strip() or None
+    if not person or not chore_name:
+        raise HTTPException(400, "person and chore_name required")
+    row = await asyncio.to_thread(
+        _query_one,
+        """
+        INSERT INTO chore_templates
+            (person, chore_name, default_dollars, default_points, category)
+        VALUES (%s, %s, %s, %s, %s)
+        ON CONFLICT (person, chore_name) DO UPDATE SET
+            default_dollars = EXCLUDED.default_dollars,
+            default_points = EXCLUDED.default_points,
+            category = COALESCE(EXCLUDED.category, chore_templates.category)
+        RETURNING id, person, chore_name, default_dollars, default_points, category, use_count
+        """,
+        (person, chore_name, default_dollars, default_points, category),
+    )
+    return row or {}
+
+
+@router.post("/chore-templates/{template_id}/update")
+async def update_chore_template(template_id: int, request: Request) -> dict[str, Any]:
+    body = await request.json()
+    fields: dict[str, Any] = {}
+    if "default_dollars" in body:
+        fields["default_dollars"] = _parse_dollars(body["default_dollars"]) or 0
+    if "default_points" in body:
+        fields["default_points"] = _parse_points(body["default_points"]) or 0
+    if "category" in body:
+        fields["category"] = (body["category"] or "").strip() or None
+    if "chore_name" in body:
+        fields["chore_name"] = (body["chore_name"] or "").strip().lower()
+    if not fields:
+        raise HTTPException(400, "no fields to update")
+    cols = ", ".join(f"{k} = %s" for k in fields)
+    params = list(fields.values()) + [template_id]
+    row = await asyncio.to_thread(
+        _query_one,
+        f"UPDATE chore_templates SET {cols} WHERE id = %s "
+        f"RETURNING id, person, chore_name, default_dollars, default_points, category, use_count",
+        tuple(params),
+    )
+    if not row:
+        raise HTTPException(404, "template not found")
+    return row
+
+
+@router.delete("/chore-templates/{template_id}")
+async def delete_chore_template(template_id: int) -> dict[str, Any]:
+    row = await asyncio.to_thread(
+        _query_one,
+        "DELETE FROM chore_templates WHERE id = %s RETURNING id",
+        (template_id,),
+    )
+    if not row:
+        raise HTTPException(404, "template not found")
+    return {"ok": True, "id": template_id}
+
+
+# ─── Reward summaries ───────────────────────────────────────────────────
+def _week_bounds(week_start: date | None = None) -> tuple[date, date]:
+    """Returns (monday, next_monday) for the week containing today by
+    default. Pass any date inside the desired week to scope it."""
+    anchor = week_start or date.today()
+    monday = anchor - timedelta(days=anchor.weekday())
+    return monday, monday + timedelta(days=7)
+
+
+@router.get("/rewards/weekly")
+async def rewards_weekly(
+    person: str | None = None,
+    week_start: str | None = None,
+) -> dict[str, Any]:
+    """Per-person weekly tally: sum of dollars + points from DONE chores
+    in the week. Pass week_start as YYYY-MM-DD (any day in the week) to
+    scope back; defaults to the current week."""
+    from datetime import datetime as _dt
+    anchor = (
+        _dt.strptime(week_start, "%Y-%m-%d").date() if week_start else None
+    )
+    monday, next_monday = _week_bounds(anchor)
+
+    rows = await asyncio.to_thread(
+        _query,
+        """
+        SELECT person,
+               COALESCE(SUM(dollars) FILTER (WHERE done), 0) AS earned_dollars,
+               COALESCE(SUM(points) FILTER (WHERE done), 0) AS earned_points,
+               COALESCE(SUM(dollars), 0) AS possible_dollars,
+               COALESCE(SUM(points), 0) AS possible_points,
+               COUNT(*) FILTER (WHERE done) AS done_count,
+               COUNT(*) AS total_count
+        FROM chores
+        WHERE chore_date >= %s AND chore_date < %s
+        GROUP BY person
+        ORDER BY person
+        """,
+        (monday, next_monday),
+    )
+    if person:
+        rows = [r for r in rows if (r["person"] or "").lower() == person.lower()]
+
+    items = await asyncio.to_thread(
+        _query,
+        """
+        SELECT id, person, chore_name, chore_date, done, dollars, points
+        FROM chores
+        WHERE chore_date >= %s AND chore_date < %s
+        ORDER BY person, chore_date, chore_name
+        """,
+        (monday, next_monday),
+    )
+    if person:
+        items = [r for r in items if (r["person"] or "").lower() == person.lower()]
+
+    return {
+        "week_start": monday.isoformat(),
+        "week_end": (next_monday - timedelta(days=1)).isoformat(),
+        "summary": rows,
+        "items": items,
+    }
 
 
 # ─── Recipe edits, rating, comments, delete ──────────────────────────────

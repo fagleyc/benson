@@ -325,7 +325,15 @@ async def run_agent(
     speaker: str | None,
     room: str | None,
     system_prompt: str,
-    timeout_s: float = 240.0,
+    # 240s previously caused TimeoutError when the outer agent called
+    # propose_change (which spawns its own 900s Opus SDK session). The
+    # outer wall would hit before the inner finished, leaving an empty
+    # proposal branch and a canned 'OAuth path failed' reply for Casey.
+    # 600s gives most propose_change sessions room to complete; for a
+    # truly async fix, propose_change would need to detach the SDK
+    # work into a background task — that's the right shape but a
+    # bigger refactor.
+    timeout_s: float = 600.0,
 ) -> tuple[str, str, dict]:
     """OAuth-based agent. Returns (text, tier, meta).
 

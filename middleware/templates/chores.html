@@ -9,6 +9,39 @@
   <div class="text-secondary small">Person × day · click ○/✓ to toggle · hover to delete · "+ Add" for new</div>
 </div>
 
+<div id="weeklyTally" class="card bg-dark border-secondary p-2 mb-3 small" style="display:none">
+  <div class="d-flex flex-wrap gap-3 align-items-baseline">
+    <strong class="text-warning" style="margin-right:.5rem">This week:</strong>
+    <span id="tallyContent" class="text-light">loading…</span>
+  </div>
+</div>
+
+<script>
+(async () => {
+  try {
+    const r = await fetch('/api/rewards/weekly');
+    if (!r.ok) return;
+    const j = await r.json();
+    if (!j.summary || !j.summary.length) return;
+    const parts = [];
+    for (const row of j.summary) {
+      const p = row.person;
+      if (p === 'Cole') {
+        const earned = parseFloat(row.earned_dollars || 0).toFixed(2);
+        const possible = parseFloat(row.possible_dollars || 0).toFixed(2);
+        parts.push(`<span><strong>Cole:</strong> $${earned} of $${possible} <span class="text-secondary">(${row.done_count}/${row.total_count} done)</span></span>`);
+      } else if (p === 'Zander') {
+        parts.push(`<span><strong>Zander:</strong> ${row.earned_points} of ${row.possible_points} pts <span class="text-secondary">(${row.done_count}/${row.total_count} done)</span></span>`);
+      }
+    }
+    if (parts.length) {
+      document.getElementById('tallyContent').innerHTML = parts.join(' &nbsp;·&nbsp; ');
+      document.getElementById('weeklyTally').style.display = 'block';
+    }
+  } catch (e) { /* silent */ }
+})();
+</script>
+
 <style>
   .chore-grid th, .chore-grid td { vertical-align: top; padding: 0.5rem; }
   .chore-grid th { background: #1a2128; }
@@ -65,8 +98,18 @@
                   <span class="chore-name{% if c.done %} done{% endif %}"
                         ondblclick="editChore({{ c.id }}, this)">{{ c.chore_name }}</span>
                   {% if c.recurring %}
-                    <span class="badge bg-info text-dark" title="Recurring: {{ c.recurring }}"
+                    <span class="badge bg-info text-dark" title="Recurring: {{ c.recurring }} (double-click to edit)"
                           ondblclick="editRecurring({{ c.id }}, this)" style="cursor:pointer;font-size:.65rem">↻ {{ c.recurring }}</span>
+                  {% endif %}
+                  {% if c.dollars and c.dollars|float > 0 %}
+                    <span class="badge bg-success" title="Cole's reward (double-click to edit)"
+                          ondblclick="editReward({{ c.id }}, 'dollars', {{ c.dollars }}, this)"
+                          style="cursor:pointer;font-size:.65rem">${{ '%.2f'|format(c.dollars|float) }}</span>
+                  {% endif %}
+                  {% if c.points and c.points|int > 0 %}
+                    <span class="badge bg-primary" title="Zander's reward (double-click to edit)"
+                          ondblclick="editReward({{ c.id }}, 'points', {{ c.points }}, this)"
+                          style="cursor:pointer;font-size:.65rem">{{ c.points }}pts</span>
                   {% endif %}
                   <button class="chore-del" onclick="deleteChore({{ c.id }}, this)" title="Delete">×</button>
                 </div>
@@ -74,7 +117,7 @@
               <button class="chore-add" onclick="showAdd('{{ p }}','{{ dstr }}', this)">+ Add</button>
               <div class="chore-add-form" id="addform-{{ p }}-{{ dstr }}" style="display:none">
                 <input type="text" class="form-control form-control-sm bg-dark text-light border-secondary mb-1"
-                       placeholder="Chore name" data-add-input>
+                       placeholder="Chore name (or pick template ↓)" list="templates-{{ p }}" data-add-input>
                 <select class="form-select form-select-sm bg-dark text-light border-secondary mb-1" data-add-recurring>
                   <option value="">One-off</option>
                   <option value="daily">Daily</option>
@@ -82,6 +125,20 @@
                   <option value="weekends">Weekends</option>
                   <option value="weekly">Weekly</option>
                 </select>
+                <div class="d-flex gap-1 mb-1">
+                  {% if p == 'Cole' %}
+                    <input type="number" step="0.25" min="0" class="form-control form-control-sm bg-dark text-light border-secondary"
+                           placeholder="$ reward" data-add-dollars style="font-size:.85rem">
+                  {% elif p == 'Zander' %}
+                    <input type="number" step="1" min="0" class="form-control form-control-sm bg-dark text-light border-secondary"
+                           placeholder="points" data-add-points style="font-size:.85rem">
+                  {% else %}
+                    <input type="number" step="0.25" min="0" class="form-control form-control-sm bg-dark text-light border-secondary"
+                           placeholder="$ reward" data-add-dollars style="font-size:.85rem">
+                    <input type="number" step="1" min="0" class="form-control form-control-sm bg-dark text-light border-secondary"
+                           placeholder="points" data-add-points style="font-size:.85rem">
+                  {% endif %}
+                </div>
                 <div class="d-flex gap-1">
                   <button class="btn btn-sm btn-warning flex-fill"
                           onclick="addChore('{{ p }}','{{ dstr }}', this)">Add</button>
@@ -146,11 +203,15 @@ async function addChore(person, dstr, btn) {
   const f = btn.closest('.chore-add-form');
   const input = f.querySelector('[data-add-input]');
   const recurringSel = f.querySelector('[data-add-recurring]');
+  const dollarsInput = f.querySelector('[data-add-dollars]');
+  const pointsInput = f.querySelector('[data-add-points]');
   const name = input.value.trim();
   if (!name) { input.focus(); return; }
   btn.disabled = true;
   const body = {person: person, chore_name: name, chore_date: dstr};
   if (recurringSel && recurringSel.value) body.recurring = recurringSel.value;
+  if (dollarsInput && dollarsInput.value) body.dollars = parseFloat(dollarsInput.value);
+  if (pointsInput && pointsInput.value) body.points = parseInt(pointsInput.value, 10);
   const r = await fetch('/api/chores', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
@@ -158,6 +219,22 @@ async function addChore(person, dstr, btn) {
   });
   btn.disabled = false;
   if (!r.ok) { alert('add failed: ' + await r.text()); return; }
+  location.reload();
+}
+
+async function editReward(id, field, current, badge) {
+  const label = field === 'dollars' ? '$ reward' : 'points';
+  const next = prompt(`New ${label}:`, current);
+  if (next === null) return;
+  const v = field === 'dollars' ? parseFloat(next) : parseInt(next, 10);
+  if (isNaN(v) || v < 0) { alert('invalid value'); return; }
+  const body = {}; body[field] = v;
+  const r = await fetch('/api/chores/' + id + '/update', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) { alert('update failed: ' + await r.text()); return; }
   location.reload();
 }
 

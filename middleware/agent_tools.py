@@ -888,26 +888,22 @@ _VALID_RECURRING_CHORE = {"daily", "weekly", "weekdays", "weekends"}
 
 @_register(
     "add_chore",
-    "Add a new chore to the chores table. Person should be 'Cole', "
-    "'Zander', or 'General' (household-wide). Date defaults to today "
-    "if omitted. Set `recurring` for chores that should regenerate on "
-    "a schedule — the nightly job (4am) spawns the next instance "
-    "automatically when the current one is checked off, AND undone "
-    "chores roll forward to the next day instead of vanishing.",
+    "Add a chore. Person: 'Cole' / 'Zander' / 'General'. Date defaults "
+    "to today. `recurring` auto-regenerates on done-toggle and rolls "
+    "forward when unfinished. `dollars` = Cole's reward (numeric); "
+    "`points` = Zander's reward (integer); both default 0.",
     {
         "type": "object",
         "properties": {
             "person": {"type": "string"},
             "chore_name": {"type": "string"},
-            "chore_date": {
-                "type": "string",
-                "description": "ISO date (YYYY-MM-DD). Defaults to today.",
-            },
+            "chore_date": {"type": "string", "description": "ISO YYYY-MM-DD. Defaults to today."},
             "recurring": {
                 "type": "string",
                 "enum": ["daily", "weekly", "weekdays", "weekends"],
-                "description": "Optional. Omit for one-off chores.",
             },
+            "dollars": {"type": ["number", "string"]},
+            "points": {"type": ["integer", "string"]},
         },
         "required": ["person", "chore_name"],
     },
@@ -915,18 +911,27 @@ _VALID_RECURRING_CHORE = {"daily", "weekly", "weekdays", "weekends"}
 async def add_chore(
     person: str, chore_name: str, chore_date: str | None = None,
     recurring: str | None = None,
+    dollars: float | str | None = None,
+    points: int | str | None = None,
 ) -> dict:
     cd = chore_date or date.today().isoformat()
     if recurring and recurring not in _VALID_RECURRING_CHORE:
         return {"ok": False, "error": f"recurring must be one of {sorted(_VALID_RECURRING_CHORE)} or omitted"}
+    try:
+        d = round(float(dollars), 2) if dollars not in (None, "") else 0.0
+        p = int(points) if points not in (None, "") else 0
+    except (TypeError, ValueError):
+        return {"ok": False, "error": "dollars must be a number, points must be an integer"}
+    if d < 0 or p < 0:
+        return {"ok": False, "error": "rewards cannot be negative"}
     row = await asyncio.to_thread(
         _write_returning,
         """
-        INSERT INTO chores (person, chore_name, chore_date, done, recurring)
-        VALUES (%s, %s, %s, FALSE, %s)
-        RETURNING id, person, chore_name, chore_date, done, recurring
+        INSERT INTO chores (person, chore_name, chore_date, done, recurring, dollars, points)
+        VALUES (%s, %s, %s, FALSE, %s, %s, %s)
+        RETURNING id, person, chore_name, chore_date, done, recurring, dollars, points
         """,
-        (person, chore_name, cd, recurring),
+        (person, chore_name, cd, recurring, d, p),
     )
     return {"ok": True, "chore": row}
 
@@ -966,9 +971,8 @@ async def delete_chore(id: int) -> dict:
 
 @_register(
     "update_chore",
-    "Edit an existing chore's person / name / date / recurrence. Only "
-    "pass fields you want to change. Set recurring='' or null to make "
-    "an existing recurring chore one-off.",
+    "Edit an existing chore's person / name / date / recurrence / "
+    "rewards. Only pass fields to change. recurring='' clears it.",
     {
         "type": "object",
         "properties": {
@@ -979,20 +983,36 @@ async def delete_chore(id: int) -> dict:
             "recurring": {
                 "type": ["string", "null"],
                 "enum": ["daily", "weekly", "weekdays", "weekends", None, ""],
-                "description": "Schedule, or null/'' to clear.",
             },
+            "dollars": {"type": ["number", "string"]},
+            "points": {"type": ["integer", "string"]},
         },
         "required": ["id"],
     },
 )
 async def update_chore(id: int, **fields) -> dict:
-    # Normalise recurring: empty string means "clear it" (set to NULL).
     if "recurring" in fields:
         v = fields["recurring"]
         if v in ("", None):
             fields["recurring"] = None
         elif v not in _VALID_RECURRING_CHORE:
             return {"ok": False, "error": f"recurring must be one of {sorted(_VALID_RECURRING_CHORE)} / null / ''"}
+    if "dollars" in fields and fields["dollars"] not in (None, ""):
+        try:
+            d = round(float(fields["dollars"]), 2)
+        except (TypeError, ValueError):
+            return {"ok": False, "error": "dollars must be a number"}
+        if d < 0:
+            return {"ok": False, "error": "dollars cannot be negative"}
+        fields["dollars"] = d
+    if "points" in fields and fields["points"] not in (None, ""):
+        try:
+            p = int(fields["points"])
+        except (TypeError, ValueError):
+            return {"ok": False, "error": "points must be an integer"}
+        if p < 0:
+            return {"ok": False, "error": "points cannot be negative"}
+        fields["points"] = p
     fields = {k: v for k, v in fields.items() if k == "recurring" or v is not None}
     if not fields:
         return {"ok": False, "error": "no fields to update"}
@@ -1002,6 +1022,95 @@ async def update_chore(id: int, **fields) -> dict:
         _write, f"UPDATE chores SET {cols} WHERE id = %s", tuple(params)
     )
     return {"ok": rc > 0, "id": id, "rows": rc, "updated": list(fields.keys())}
+
+
+@_register(
+    "weekly_chore_summary",
+    "Tally one person's (or the family's) chore rewards for a week. "
+    "Use when a kid asks 'what have I earned so far?' or for the "
+    "Sunday roll-up. Returns earned vs possible dollars + points and "
+    "a per-chore breakdown. `week_start` defaults to current Monday; "
+    "pass any ISO date inside a past week to scope back. `person` is "
+    "optional — omit for everyone.",
+    {
+        "type": "object",
+        "properties": {
+            "person": {"type": "string"},
+            "week_start": {"type": "string"},
+        },
+        "required": [],
+    },
+)
+async def weekly_chore_summary(
+    person: str | None = None, week_start: str | None = None
+) -> dict:
+    from datetime import date as _d, datetime as _dt, timedelta as _td
+    anchor = _dt.strptime(week_start, "%Y-%m-%d").date() if week_start else _d.today()
+    monday = anchor - _td(days=anchor.weekday())
+    next_monday = monday + _td(days=7)
+
+    sql = (
+        "SELECT person, "
+        "COALESCE(SUM(dollars) FILTER (WHERE done), 0) AS earned_dollars, "
+        "COALESCE(SUM(points) FILTER (WHERE done), 0) AS earned_points, "
+        "COALESCE(SUM(dollars), 0) AS possible_dollars, "
+        "COALESCE(SUM(points), 0) AS possible_points, "
+        "COUNT(*) FILTER (WHERE done) AS done_count, "
+        "COUNT(*) AS total_count "
+        "FROM chores WHERE chore_date >= %s AND chore_date < %s"
+    )
+    params: list = [monday, next_monday]
+    if person:
+        sql += " AND LOWER(person) = LOWER(%s)"
+        params.append(person)
+    sql += " GROUP BY person ORDER BY person"
+    rows = await asyncio.to_thread(_query, sql, tuple(params))
+
+    bsql = (
+        "SELECT id, person, chore_name, chore_date, done, dollars, points "
+        "FROM chores WHERE chore_date >= %s AND chore_date < %s"
+    )
+    bparams: list = [monday, next_monday]
+    if person:
+        bsql += " AND LOWER(person) = LOWER(%s)"
+        bparams.append(person)
+    bsql += " ORDER BY chore_date, chore_name"
+    items = await asyncio.to_thread(_query, bsql, tuple(bparams))
+
+    return {
+        "ok": True,
+        "week_start": monday.isoformat(),
+        "week_end": (next_monday - _td(days=1)).isoformat(),
+        "summary": rows,
+        "items": items,
+    }
+
+
+@_register(
+    "list_chore_templates",
+    "Suggested chore catalog from past assignments — most-used "
+    "(person, chore_name) pairs with default rewards. Query before "
+    "add_chore to reuse existing names + their default rewards.",
+    {
+        "type": "object",
+        "properties": {
+            "person": {"type": "string"},
+        },
+        "required": [],
+    },
+)
+async def list_chore_templates(person: str | None = None) -> dict:
+    sql = (
+        "SELECT id, person, chore_name, default_dollars, default_points, "
+        "category, use_count FROM chore_templates"
+    )
+    params: tuple = ()
+    if person:
+        sql += " WHERE LOWER(person) = LOWER(%s)"
+        params = (person,)
+    sql += " ORDER BY use_count DESC, chore_name LIMIT 100"
+    rows = await asyncio.to_thread(_query, sql, params)
+    return {"ok": True, "templates": rows, "count": len(rows)}
 
 
 # ─── Weekly plan writes ──────────────────────────────────────────────────
