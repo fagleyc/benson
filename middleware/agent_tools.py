@@ -943,6 +943,27 @@ async def add_chore(
         """,
         (person, chore_name, cd, recurring, d, p),
     )
+    # Save as template too — Benson-added chores autocomplete on the
+    # hub form and remember the dollar value next time.
+    try:
+        await asyncio.to_thread(
+            _write,
+            """
+            INSERT INTO chore_templates
+                (person, chore_name, default_dollars, default_points, use_count, archived_at)
+            VALUES (%s, %s, %s, %s, 1, NOW())
+            ON CONFLICT (person, chore_name) DO UPDATE SET
+                use_count = chore_templates.use_count + 1,
+                default_dollars = CASE WHEN EXCLUDED.default_dollars > 0
+                    THEN EXCLUDED.default_dollars ELSE chore_templates.default_dollars END,
+                default_points = CASE WHEN EXCLUDED.default_points > 0
+                    THEN EXCLUDED.default_points ELSE chore_templates.default_points END,
+                archived_at = NOW()
+            """,
+            (person, chore_name.lower().strip(), d, p),
+        )
+    except Exception as e:
+        logger.warning(f"chore template upsert failed (non-fatal): {e}")
     return {"ok": True, "chore": row}
 
 

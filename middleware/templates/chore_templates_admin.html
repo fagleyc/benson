@@ -1,0 +1,165 @@
+{% extends "layout.html" %}
+{% block title %}Chore Templates — Fagley House Hub{% endblock %}
+{% block content %}
+<a href="/advanced" class="text-secondary">← Advanced</a>
+<div class="d-flex justify-content-between align-items-baseline mt-3 mb-2">
+  <h2 class="mb-0">Chore templates</h2>
+  <div class="btn-group btn-group-sm" role="group" id="personFilter">
+    <button class="btn btn-outline-warning active" data-person="">All</button>
+    <button class="btn btn-outline-warning" data-person="Cole">Cole</button>
+    <button class="btn btn-outline-warning" data-person="Zander">Zander</button>
+    <button class="btn btn-outline-warning" data-person="General">General</button>
+  </div>
+</div>
+<p class="text-secondary small mb-3">
+  Reusable chore catalog drawn from history + every chore added since
+  2026-05-03. Click any cell to edit. New rows added at the bottom auto-save.
+  Use-count is the number of times this chore has been assigned (high = popular).
+</p>
+
+<table class="table table-dark table-sm align-middle" id="tplTable">
+  <thead>
+    <tr>
+      <th style="width:90px">Person</th>
+      <th>Chore name</th>
+      <th style="width:100px">$ default</th>
+      <th style="width:100px">Points default</th>
+      <th style="width:80px;text-align:right">Used</th>
+      <th style="width:60px"></th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for t in templates_rows %}
+    <tr data-id="{{ t.id }}" data-person="{{ t.person }}">
+      <td><span class="badge bg-secondary">{{ t.person }}</span></td>
+      <td><span class="editable" data-field="chore_name">{{ t.chore_name }}</span></td>
+      <td><span class="editable" data-field="default_dollars" data-numeric="1">{{ '%.2f'|format((t.default_dollars or 0)|float) }}</span></td>
+      <td><span class="editable" data-field="default_points" data-numeric="1">{{ t.default_points or 0 }}</span></td>
+      <td class="text-end text-secondary">{{ t.use_count or 0 }}</td>
+      <td><button class="btn btn-sm btn-outline-danger" onclick="deleteRow(this)" title="Delete">×</button></td>
+    </tr>
+  {% endfor %}
+  </tbody>
+  <tfoot>
+    <tr id="addRow" class="text-secondary small">
+      <td>
+        <select id="newPerson" class="form-select form-select-sm bg-dark text-light border-secondary">
+          <option value="Cole">Cole</option>
+          <option value="Zander">Zander</option>
+          <option value="General">General</option>
+        </select>
+      </td>
+      <td><input id="newName" type="text" class="form-control form-control-sm bg-dark text-light border-secondary" placeholder="new chore name (lowercase)"></td>
+      <td><input id="newDollars" type="number" step="0.25" min="0" class="form-control form-control-sm bg-dark text-light border-secondary" placeholder="$"></td>
+      <td><input id="newPoints" type="number" step="1" min="0" class="form-control form-control-sm bg-dark text-light border-secondary" placeholder="pts"></td>
+      <td></td>
+      <td><button class="btn btn-sm btn-warning" onclick="addRow()">+</button></td>
+    </tr>
+  </tfoot>
+</table>
+
+<style>
+  .editable { cursor: text; padding: 2px 4px; border-radius: 3px; }
+  .editable:hover { background: #1e2a34; }
+  .editable.editing { background: #0f1419; outline: 1px solid #ffc107; }
+</style>
+
+<script>
+// ─── Filter ─────────────────────────────────────────────────────────
+document.querySelectorAll('#personFilter button').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('#personFilter button').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    const want = btn.dataset.person;
+    document.querySelectorAll('#tplTable tbody tr').forEach(tr => {
+      tr.style.display = (!want || tr.dataset.person === want) ? '' : 'none';
+    });
+  });
+});
+
+// ─── Inline edit ────────────────────────────────────────────────────
+document.querySelectorAll('.editable').forEach(span => {
+  span.addEventListener('click', () => beginEdit(span));
+});
+
+function beginEdit(span) {
+  if (span.classList.contains('editing')) return;
+  const original = span.textContent;
+  const isNumeric = span.dataset.numeric === '1';
+  const input = document.createElement('input');
+  input.type = isNumeric ? 'number' : 'text';
+  if (isNumeric) { input.step = span.dataset.field === 'default_dollars' ? '0.25' : '1'; input.min = '0'; }
+  input.value = original;
+  input.className = 'form-control form-control-sm bg-dark text-light border-secondary';
+  input.style.maxWidth = '100%';
+  span.classList.add('editing');
+  span.textContent = '';
+  span.appendChild(input);
+  input.focus();
+  input.select();
+
+  const commit = async () => {
+    const next = input.value.trim();
+    if (next === original.trim()) { span.classList.remove('editing'); span.textContent = original; return; }
+    const tr = span.closest('tr');
+    const id = tr.dataset.id;
+    const field = span.dataset.field;
+    const body = {};
+    body[field] = isNumeric ? parseFloat(next) : next;
+    const r = await fetch('/api/chore-templates/' + id + '/update', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body),
+    });
+    span.classList.remove('editing');
+    if (!r.ok) {
+      span.textContent = original;
+      alert('save failed: ' + await r.text());
+      return;
+    }
+    const j = await r.json();
+    let display = next;
+    if (field === 'default_dollars') display = parseFloat(j.default_dollars || 0).toFixed(2);
+    else if (field === 'default_points') display = String(parseInt(j.default_points || 0, 10));
+    else if (field === 'chore_name') display = j.chore_name || next;
+    span.textContent = display;
+  };
+  const cancel = () => {
+    span.classList.remove('editing');
+    span.textContent = original;
+  };
+  input.addEventListener('blur', commit);
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
+    if (e.key === 'Escape') { e.preventDefault(); input.removeEventListener('blur', commit); cancel(); }
+  });
+}
+
+// ─── Delete ─────────────────────────────────────────────────────────
+async function deleteRow(btn) {
+  const tr = btn.closest('tr');
+  const id = tr.dataset.id;
+  const name = tr.querySelector('[data-field=chore_name]').textContent;
+  if (!confirm('Delete template "' + name + '"?')) return;
+  const r = await fetch('/api/chore-templates/' + id, {method: 'DELETE'});
+  if (!r.ok) { alert('delete failed'); return; }
+  tr.remove();
+}
+
+// ─── Add row ────────────────────────────────────────────────────────
+async function addRow() {
+  const person = document.getElementById('newPerson').value;
+  const name = document.getElementById('newName').value.trim().toLowerCase();
+  const dollars = parseFloat(document.getElementById('newDollars').value) || 0;
+  const points = parseInt(document.getElementById('newPoints').value, 10) || 0;
+  if (!name) { document.getElementById('newName').focus(); return; }
+  const r = await fetch('/api/chore-templates', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({person, chore_name: name, default_dollars: dollars, default_points: points}),
+  });
+  if (!r.ok) { alert('add failed: ' + await r.text()); return; }
+  location.reload();
+}
+</script>
+{% endblock %}

@@ -529,6 +529,21 @@ def _gather_benson_admin_sync() -> dict:
     return out
 
 
+# ─── Chore template editor ──────────────────────────────────────────────
+@router.get("/admin/chore-templates", response_class=HTMLResponse)
+async def chore_templates_admin(request: Request):
+    rows = await asyncio.to_thread(
+        _query,
+        "SELECT id, person, chore_name, default_dollars, default_points, "
+        "use_count, archived_at FROM chore_templates "
+        "ORDER BY person, use_count DESC, chore_name",
+    )
+    return templates.TemplateResponse(
+        request, "chore_templates_admin.html",
+        _ctx("advanced", templates_rows=rows),
+    )
+
+
 # ─── Self-modification proposals ─────────────────────────────────────────
 @router.get("/admin/proposals", response_class=HTMLResponse)
 async def proposals_admin(request: Request):

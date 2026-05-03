@@ -269,6 +269,40 @@ def _parse_points(v) -> int | None:
     return p
 
 
+def _upsert_chore_template(person: str, chore_name: str,
+                           dollars: float | None, points: int | None) -> None:
+    """Save the chore as a reusable template so it autocompletes next
+    time. Updates use_count + the default rewards. Casey 2026-05-03:
+    'when a new chore is entered to a list, save it and the dollar
+    value' — every add becomes a template seed."""
+    name = (chore_name or "").strip().lower()
+    if not person or not name:
+        return
+    # Use a direct psycopg2 connection — _query_one calls fetchone()
+    # which raises on a no-RETURNING statement.
+    import psycopg2 as _pg
+    with _pg.connect(**PG_DSN) as c, c.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO chore_templates
+                (person, chore_name, default_dollars, default_points, use_count, archived_at)
+            VALUES (%s, %s, %s, %s, 1, NOW())
+            ON CONFLICT (person, chore_name) DO UPDATE SET
+                use_count = chore_templates.use_count + 1,
+                default_dollars = CASE
+                    WHEN EXCLUDED.default_dollars > 0 THEN EXCLUDED.default_dollars
+                    ELSE chore_templates.default_dollars
+                END,
+                default_points = CASE
+                    WHEN EXCLUDED.default_points > 0 THEN EXCLUDED.default_points
+                    ELSE chore_templates.default_points
+                END,
+                archived_at = NOW()
+            """,
+            (person, name, dollars or 0, points or 0),
+        )
+
+
 @router.post("/chores")
 async def create_chore(request: Request) -> dict[str, Any]:
     body = await request.json()
@@ -289,6 +323,14 @@ async def create_chore(request: Request) -> dict[str, Any]:
         """,
         (person, chore_name, chore_date, recurring, dollars, points),
     )
+    # Side effect: seed the template so it autocompletes next time and
+    # the latest reward sticks as the default.
+    try:
+        await asyncio.to_thread(
+            _upsert_chore_template, person, chore_name, dollars, points
+        )
+    except Exception as e:
+        logger.warning(f"chore template upsert failed (non-fatal): {e}")
     return row or {}
 
 
