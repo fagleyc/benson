@@ -2069,12 +2069,31 @@ async def delete_calendar_event(
     },
 )
 async def search_email(user_name: str, query: str, max_results: int = 10) -> dict:
-    from google_handler import gmail_service
+    from google_handler import get_credentials_with_status
+    from googleapiclient.discovery import build
 
     def _run() -> dict:
-        svc = gmail_service(user_name)
-        if not svc:
-            return {"ok": False, "error": f"{user_name} has not linked Gmail"}
+        creds, status = get_credentials_with_status(user_name)
+        if not creds:
+            if status == "no_row":
+                return {
+                    "ok": False,
+                    "error": f"{user_name} has not linked Gmail. Go to /admin/google to authorize.",
+                    "status": status,
+                }
+            return {
+                "ok": False,
+                "error": (
+                    f"{user_name}'s Gmail token was rejected by Google "
+                    f"({status}). The OAuth grant exists in our DB but "
+                    f"Google revoked the refresh token (common causes: "
+                    f"password change, signed out of devices, or grant "
+                    f"removed at myaccount.google.com/permissions). "
+                    f"Re-authorize at /admin/google to fix."
+                ),
+                "status": status,
+            }
+        svc = build("gmail", "v1", credentials=creds, cache_discovery=False)
         listing = svc.users().messages().list(
             userId="me", q=query, maxResults=max(1, min(max_results, 30))
         ).execute()
@@ -2129,9 +2148,18 @@ async def read_email(user_name: str, message_id: str) -> dict:
         return ""
 
     def _run() -> dict:
-        svc = gmail_service(user_name)
-        if not svc:
-            return {"ok": False, "error": f"{user_name} has not linked Gmail"}
+        from google_handler import get_credentials_with_status
+        from googleapiclient.discovery import build
+        creds, status = get_credentials_with_status(user_name)
+        if not creds:
+            if status == "no_row":
+                return {"ok": False, "error": f"{user_name} has not linked Gmail. Go to /admin/google to authorize.", "status": status}
+            return {
+                "ok": False,
+                "error": f"{user_name}'s Gmail token was rejected by Google ({status}). Re-authorize at /admin/google.",
+                "status": status,
+            }
+        svc = build("gmail", "v1", credentials=creds, cache_discovery=False)
         m = svc.users().messages().get(userId="me", id=message_id, format="full").execute()
         headers = {h["name"]: h["value"] for h in m.get("payload", {}).get("headers", [])}
         body = _walk(m.get("payload", {}))[:10000]

@@ -249,10 +249,24 @@ def _credentials_from_row(row: dict):
 
 
 def get_credentials(user_name: str):
-    """Load creds, refreshing if expired."""
+    """Load creds, refreshing if expired. Returns None on any failure;
+    callers wanting the failure REASON should use get_credentials_with_status."""
+    creds, _status = get_credentials_with_status(user_name)
+    return creds
+
+
+def get_credentials_with_status(user_name: str) -> tuple:
+    """Load creds + a status string. Status is one of:
+        'ok'           — creds usable
+        'no_row'       — user has never linked their Google account
+        'refresh_failed:<reason>' — token row exists but Google rejected
+                          the refresh (most often 'invalid_grant: Token
+                          has been expired or revoked' — user needs to
+                          re-link at /admin/google).
+    """
     row = _load_token_row(user_name)
     if not row:
-        return None
+        return None, "no_row"
     creds = _credentials_from_row(row)
     if not creds.valid:
         try:
@@ -267,9 +281,10 @@ def get_credentials(user_name: str):
                 email=row.get("email"),
             )
         except Exception as e:
+            reason = str(e).splitlines()[0][:200]
             logger.warning(f"refresh failed for {user_name}: {e}")
-            return None
-    return creds
+            return None, f"refresh_failed:{reason}"
+    return creds, "ok"
 
 
 def calendar_service(user_name: str):
