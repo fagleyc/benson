@@ -16,28 +16,33 @@
   .chore-bar > div { height: 100%; background: linear-gradient(90deg, #f39c12, #e67e22); }
   .greet { color: #e0c98a; }
 
-  /* iPad / tablet bump — kitchen-readable text on the counter-mounted hub */
+  /* iPad / tablet bump — kitchen-readable but tightened vertical so
+     the page fits on a 1024×768 iPad without scrolling. Casey
+     2026-05-04: "homepage extends iPad screen, condense vertically". */
   @media (min-width: 768px) and (max-width: 1366px) {
-    .clock-big                   { font-size: 5.5rem !important; }
-    #dateDisplay                 { font-size: 1.65rem !important; }
-    .greet                       { font-size: 1.1rem; }
-    .weather-now-temp            { font-size: 4.5rem; }
-    .weather-icon                { font-size: 3.5rem; }
-    .forecast-temp               { font-size: 1.5rem; }
-    .forecast-day .text-secondary.small { font-size: 1rem; }
-    #weatherWidget .text-secondary.text-capitalize { font-size: 1.3rem; }
-    #weatherWidget .text-uppercase.small { font-size: 1rem; }
-    .home-card h6.text-uppercase { font-size: 1.05rem !important; }
-    #mealBlock .fw-semibold      { font-size: 1.65rem; }
-    #mealBlock .text-secondary.small { font-size: 1.1rem; }
-    #mealBlock .btn              { font-size: 1.05rem; padding: 0.5rem 1rem; }
-    #calendarWidget              { font-size: 1.25rem; }
-    #calendarWidget .text-warning.small { font-size: 1.1rem !important; }
-    #calendarWidget .text-secondary.small { font-size: 1.05rem !important; }
-    #choresWidget strong         { font-size: 1.5rem; }
-    #choresWidget .badge         { font-size: 1rem; }
-    #choresWidget .text-secondary.small { font-size: 1rem !important; }
-    .home-card                   { padding: 1.4rem !important; }
+    .clock-big                   { font-size: 4.5rem !important; line-height: 1; }
+    #dateDisplay                 { font-size: 1.4rem !important; }
+    .greet                       { font-size: 1rem; }
+    .weather-now-temp            { font-size: 3.5rem; }
+    .weather-icon                { font-size: 2.8rem; }
+    .forecast-temp               { font-size: 1.25rem; }
+    .forecast-day                { padding: .25rem .15rem; }
+    .forecast-day .text-secondary.small { font-size: .9rem; }
+    #weatherWidget .text-secondary.text-capitalize { font-size: 1.1rem; }
+    #weatherWidget .text-uppercase.small { font-size: .9rem; }
+    .home-card h6.text-uppercase { font-size: 1rem !important; }
+    #mealBlock .fw-semibold      { font-size: 1.4rem; }
+    #mealBlock .text-secondary.small { font-size: 1rem; }
+    #mealBlock .btn              { font-size: .95rem; padding: 0.35rem 0.8rem; }
+    #calendarWidget              { font-size: 1.1rem; }
+    #calendarWidget .text-warning.small { font-size: 1rem !important; }
+    #calendarWidget .text-secondary.small { font-size: .95rem !important; }
+    #choresWidget strong         { font-size: 1.25rem; }
+    #choresWidget .badge         { font-size: .9rem; }
+    #choresWidget .text-secondary.small { font-size: .9rem !important; }
+    .home-card                   { padding: .9rem !important; }
+    .row.g-3                     { --bs-gutter-x: .75rem; --bs-gutter-y: .75rem; }
+    .mb-3                        { margin-bottom: .75rem !important; }
   }
 </style>
 
@@ -46,7 +51,7 @@
 
   <!-- Greeting + clock + tonight's meal -->
   <div class="col-12 col-lg-7">
-    <div class="home-card home-hero p-4 h-100">
+    <div class="home-card home-hero p-3 h-100">
       <div class="d-flex justify-content-between align-items-start">
         <div>
           <div class="greet small text-uppercase" id="greetText">Welcome home</div>
@@ -190,7 +195,7 @@ window.__homeTimers.push(setInterval(loadCalendar, 5 * 60 * 1000));
 <!-- ─── Footer row: Message of the Day ───────────────────────────── -->
 <div class="row g-3">
   <div class="col-12">
-    <div class="home-card p-3 d-flex flex-column" style="min-height: 130px;">
+    <div class="home-card p-2 d-flex flex-column" style="min-height: 70px;">
       <div class="d-flex justify-content-between align-items-baseline mb-2">
         <h6 class="text-uppercase text-secondary small mb-0">Benson's Take Today</h6>
         <button class="btn btn-sm btn-outline-secondary" onclick="refreshMotd(true)" title="Generate a new one">↻</button>
@@ -326,34 +331,58 @@ async function loadWeather() {
     const fc = j.forecast || [];
     const icon = WX_ICON[cur.condition] || "🌡️";
     const wx = document.getElementById('weatherWidget');
-    const days = fc.map((d, i) => {
-      const dt = new Date(d.datetime);
-      const dayLabel = i === 0 ? 'Today' : dt.toLocaleDateString([], {weekday:'short'});
+
+    // HA returns datetime as UTC midnight ("2026-05-06T00:00:00+00:00").
+    // Parsing with `new Date()` shifts to local TZ and lands on the
+    // PREVIOUS day in MDT. Strip to the date portion and rebuild as
+    // local midnight so the weekday label matches the forecast date.
+    const todayKey = (() => {
+      const t = new Date();
+      return `${t.getFullYear()}-${String(t.getMonth()+1).padStart(2,'0')}-${String(t.getDate()).padStart(2,'0')}`;
+    })();
+
+    const days = fc.map((d) => {
+      const datePart = (d.datetime || '').slice(0, 10);  // YYYY-MM-DD
+      const [Y, M, D] = datePart.split('-').map(Number);
+      const localDate = (Y && M && D) ? new Date(Y, M-1, D) : new Date(d.datetime);
+      const isToday = datePart === todayKey;
+      const dayLabel = isToday ? 'Today' :
+                       localDate.toLocaleDateString([], {weekday:'short'});
       const dIcon = WX_ICON[d.condition] || "·";
+      const precip = d.precipitation > 0 ? `<div class="text-info small" style="font-size:.7rem">${d.precipitation}"</div>` : '';
       return `<div class="forecast-day flex-fill">
         <div class="text-secondary small">${dayLabel}</div>
         <div style="font-size:1.5rem">${dIcon}</div>
         <div class="forecast-temp">${Math.round(d.temperature)}°</div>
         <div class="text-secondary small">${Math.round(d.templow)}°</div>
+        ${precip}
       </div>`;
     }).join('');
+
+    // Build a richer today summary. HA's daily forecast often skips
+    // today (the "current state" is today's data) — so we synthesize
+    // from current + first forecast entry's lows when reasonable.
+    const tomorrow = fc[0] || {};
+    const condStr = (cur.condition || '').replace(/[-_]/g, ' ');
+    const summaryParts = [];
+    if (cur.humidity) summaryParts.push(`${cur.humidity}% humidity`);
+    if (cur.wind_speed) summaryParts.push(`${Math.round(cur.wind_speed)} ${cur.wind_speed_unit||'mph'} wind`);
+    if (tomorrow.precipitation > 0) summaryParts.push(`${tomorrow.precipitation}" precip expected`);
+    const summary = summaryParts.join(' · ');
+
     wx.innerHTML = `
-      <div class="d-flex justify-content-between align-items-start mb-2">
+      <div class="d-flex justify-content-between align-items-start mb-1">
         <div>
           <div class="text-secondary small text-uppercase">Colorado Springs</div>
           <div class="weather-now-temp text-light">${Math.round(cur.temperature || 0)}°<span class="text-secondary fs-4">${cur.temperature_unit||'F'}</span></div>
-          <div class="text-secondary text-capitalize">${(cur.condition||'').replace(/[-_]/g,' ')}</div>
+          <div class="text-secondary text-capitalize">${condStr}</div>
         </div>
         <div class="text-end">
           <div class="weather-icon">${icon}</div>
-          <div class="text-secondary small mt-2">
-            ${cur.humidity ? cur.humidity+'% hum' : ''}
-            ${cur.wind_speed ? '<br>'+Math.round(cur.wind_speed)+' '+(cur.wind_speed_unit||'mph') : ''}
-          </div>
         </div>
       </div>
-      <hr class="border-secondary">
-      <div class="d-flex justify-content-between gap-1">${days}</div>`;
+      ${summary ? `<div class="text-secondary small mb-1" style="border-top:1px solid #2d3a47;padding-top:.4rem">${summary}</div>` : ''}
+      <div class="d-flex justify-content-between gap-1" style="border-top:1px solid #2d3a47;padding-top:.4rem">${days}</div>`;
   } catch(e) {
     document.getElementById('weatherWidget').innerHTML = `<div class="text-warning small">Weather unavailable.</div>`;
   }
