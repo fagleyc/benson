@@ -357,6 +357,7 @@
     speakerSel.addEventListener('change', () => {
       localStorage.setItem('benson_speaker', speakerSel.value);
       syncHidden();
+      hydrateAllChatLogs(speakerSel.value, /*force*/ true);
     });
   }
   if (roomSel) {
@@ -375,6 +376,71 @@
     });
   }
   syncHidden();
+
+  // ─── Unified chat history per speaker ──────────────────────────────
+  // Both the floating bubble (#chat-log) and the /chat tab
+  // (#chat-log-full) rehydrate from /api/conversations on
+  // open / page-load / speaker-change so the conversation feels
+  // like one stream per person across surfaces.
+  function escHtml(s) {
+    return String(s || '').replace(/[&<>"']/g, c =>
+      ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+  function renderTurn(c) {
+    const tier = c.tier || '';
+    const t = new Date(c.created_at);
+    const ts = t.toLocaleTimeString([], {hour:'numeric', minute:'2-digit'});
+    return (
+      '<div class="mb-2" data-conv-id="' + c.id + '">' +
+        '<div class="chat-bubble-user mb-1">' + escHtml(c.user_text) + '</div>' +
+        '<div class="chat-bubble-benson">' + escHtml(c.benson_response) + '</div>' +
+        '<div class="chat-meta text-end text-secondary small">' +
+          escHtml(tier) + ' · ' + escHtml(c.room || '') + ' · ' + ts +
+        '</div>' +
+      '</div>'
+    );
+  }
+  async function hydrateChatLog(targetEl, speaker, force) {
+    if (!targetEl) return;
+    if (!force && targetEl.dataset.hydrated === '1') return;
+    try {
+      const r = await fetch('/api/conversations?speaker=' + encodeURIComponent(speaker) + '&limit=20');
+      if (!r.ok) return;
+      const j = await r.json();
+      const rows = (j.conversations || []).slice().reverse();  // oldest first
+      if (rows.length === 0) {
+        // Don't wipe a "welcome" placeholder — only fill if the log
+        // is currently empty of real content.
+        targetEl.dataset.hydrated = '1';
+        return;
+      }
+      targetEl.innerHTML = rows.map(renderTurn).join('');
+      targetEl.dataset.hydrated = '1';
+      targetEl.scrollTop = targetEl.scrollHeight;
+    } catch (e) { /* silent — chat still works without history */ }
+  }
+  function hydrateAllChatLogs(speaker, force) {
+    document.querySelectorAll('#chat-log, #chat-log-full').forEach(el => {
+      hydrateChatLog(el, speaker, force);
+    });
+  }
+  // Hydrate any chat log present in this page right now. The script
+  // tag lives at the end of layout.html's body, after the panel HTML
+  // and after any extending block's content, so the elements exist.
+  hydrateAllChatLogs(speakerSel ? speakerSel.value : 'Casey', false);
+  // Hydrate the floating bubble the first time it's opened — saves a
+  // request when the user never opens it.
+  const fab = document.getElementById('chatFab');
+  if (fab) {
+    fab.addEventListener('click', () => {
+      // The onclick attribute also runs and toggles `.open`; we just
+      // hydrate after a microtask so the panel is visible.
+      setTimeout(() => {
+        const log = document.getElementById('chat-log');
+        if (log) hydrateChatLog(log, speakerSel ? speakerSel.value : 'Casey', false);
+      }, 0);
+    });
+  }
 
   // ─── Web Speech API mic button ────────────────────────────────────
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;

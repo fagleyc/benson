@@ -629,17 +629,25 @@ async def memory_recent(limit: int = Query(20, ge=1, le=200)) -> dict[str, Any]:
 
 # ─── Conversations log ───────────────────────────────────────────────────
 @router.get("/conversations")
-async def conversations_recent(limit: int = Query(50, ge=1, le=500)) -> dict[str, Any]:
-    rows = await asyncio.to_thread(
-        _query,
-        """
-        SELECT id, speaker, room, user_text, benson_response, tier, created_at
-        FROM conversations
-        ORDER BY created_at DESC
-        LIMIT %s
-        """,
-        (limit,),
+async def conversations_recent(
+    limit: int = Query(50, ge=1, le=500),
+    speaker: str | None = None,
+) -> dict[str, Any]:
+    """Recent conversation history, optionally scoped to one speaker.
+    Used by both the floating chat bubble and the /chat tab to
+    rehydrate prior turns so the conversation feels like one stream
+    per person across surfaces."""
+    sql = (
+        "SELECT id, speaker, room, user_text, benson_response, tier, "
+        "created_at FROM conversations"
     )
+    params: list = []
+    if speaker:
+        sql += " WHERE LOWER(speaker) = LOWER(%s)"
+        params.append(speaker)
+    sql += " ORDER BY created_at DESC LIMIT %s"
+    params.append(limit)
+    rows = await asyncio.to_thread(_query, sql, tuple(params))
     return {"conversations": rows, "count": len(rows)}
 
 

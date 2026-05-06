@@ -99,43 +99,26 @@
 {% block scripts %}
 <script>
 (function(){
-  var STORAGE_KEY = 'benson_chat_full_history';
+  // Chat history is unified per speaker via /api/conversations and
+  // hydrated by hydrateChatLog() in layout.html. The legacy
+  // localStorage cache here was per-tab and didn't sync with the
+  // floating bubble — replaced by DB-as-source-of-truth.
   var log = document.getElementById('chat-log-full');
-  var form = document.querySelector('.benson-chat-form');
 
-  // --- Restore persisted history on load ---
-  var saved = localStorage.getItem(STORAGE_KEY);
-  if (saved && log) {
-    // Remove the placeholder hint text (first child div.text-secondary) if history exists
-    var hint = log.querySelector('div.text-secondary.small.text-center');
-    if (hint) hint.remove();
-    log.innerHTML = saved;
-    log.scrollTop = 9e9;
-  }
+  // No-op so the existing hx-on::after-request hook doesn't error.
+  // (The DB save happens server-side when handle_conversation logs
+  //  the turn; the next hydrate pulls it back.)
+  window.bensonSaveChatHistory = function() { /* noop */ };
 
-  // --- Save history helper (called from hx-on::after-request) ---
-  window.bensonSaveChatHistory = function() {
-    if (log) {
-      // Strip the hint div if still present before saving
-      var hint = log.querySelector('div.text-secondary.small.text-center');
-      if (hint) hint.remove();
-      localStorage.setItem(STORAGE_KEY, log.innerHTML);
-    }
-  };
-
-  // --- Clear button ---
+  // --- Clear button (clears the visible log only; DB still has it) ---
   var clearBtn = document.getElementById('chat-clear-btn');
   if (clearBtn) {
     clearBtn.addEventListener('click', function() {
-      localStorage.removeItem(STORAGE_KEY);
       if (log) {
+        log.dataset.hydrated = '0';  // allow re-hydrate next time
         log.innerHTML = '<div class="text-secondary small text-center my-4">' +
-          'Ask Benson anything. He can answer questions about the house, ' +
-          'control fans / lights / shades / Sonos, and pull up recipes.<br>' +
-          'Try: <em>"turn off the master bedroom fan light"</em>, ' +
-          '<em>"what chores does Zander have today?"</em>, ' +
-          '<em>"open the shades"</em>.<br>' +
-          '<strong>🎙 Click the mic to talk</strong> — Benson replies on your room\'s speaker.' +
+          'Cleared the visible log. Server-side history is still intact ' +
+          '— switch speakers or reload to pull it back.' +
           '</div>';
       }
     });
