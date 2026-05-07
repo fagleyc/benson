@@ -47,10 +47,13 @@
       <span class="filter-pill" data-filter="course" data-value="{{ c|lower }}">{{ c }}</span>
     {% endfor %}
   </div>
-  <div class="d-flex flex-wrap gap-1 align-items-baseline mt-1">
+  <div class="d-flex flex-wrap gap-2 align-items-baseline mt-1">
     <strong class="text-secondary me-2">Type:</strong>
-    <span class="filter-pill active" data-filter="type" data-value="">All</span>
-    <span id="typeFilters"></span>
+    <input id="typeInput" list="typeOptions" type="search"
+           class="form-control form-control-sm bg-dark text-light border-secondary"
+           placeholder="any (e.g. pasta, mexican, salad)…"
+           style="max-width: 260px; font-size: .8rem;">
+    <datalist id="typeOptions"></datalist>
   </div>
   <div class="d-flex flex-wrap gap-2 align-items-baseline mt-1">
     <strong class="text-secondary me-2">Rating:</strong>
@@ -135,8 +138,8 @@
   const rows = Array.from(tbody.querySelectorAll('tr.recipe-row'));
   const state = { course: '', type: '', rating: 0, prep: '', q: '', sort: 'title', dir: 1 };
 
-  // Build the type-filter pills from distinct dish_types + tags in
-  // the data so we don't hardcode anything that isn't actually present.
+  // Type filter is a free-text search over dish_type + tags, with a
+  // datalist of values actually present in the data for autocomplete.
   const types = new Set();
   rows.forEach(r => {
     const t = r.dataset.type;
@@ -144,23 +147,26 @@
     const tags = r.dataset.tags;
     if (tags) tags.split(',').forEach(x => x.trim() && types.add(x.trim()));
   });
-  const typeContainer = document.getElementById('typeFilters');
+  const typeOptions = document.getElementById('typeOptions');
   Array.from(types).sort().forEach(t => {
-    const el = document.createElement('span');
-    el.className = 'filter-pill';
-    el.dataset.filter = 'type';
-    el.dataset.value = t;
-    el.textContent = t;
-    typeContainer.appendChild(el);
+    const o = document.createElement('option');
+    o.value = t;
+    typeOptions.appendChild(o);
+  });
+  const typeInput = document.getElementById('typeInput');
+  typeInput.addEventListener('input', () => {
+    state.type = typeInput.value.trim().toLowerCase();
+    apply();
   });
 
   function apply() {
     let visible = 0;
     rows.forEach(r => {
       const okCourse = !state.course || r.dataset.course === state.course;
+      // Substring match against dish_type + comma-joined tags.
       const okType = !state.type ||
-                     r.dataset.type === state.type ||
-                     r.dataset.tags.split(',').includes(state.type);
+                     r.dataset.type.indexOf(state.type) >= 0 ||
+                     r.dataset.tags.indexOf(state.type) >= 0;
       const okRating = !state.rating ||
                        (state.rating === 5 ? parseFloat(r.dataset.rating) >= 5 :
                         parseFloat(r.dataset.rating) >= state.rating);
