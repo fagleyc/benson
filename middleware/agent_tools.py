@@ -454,7 +454,10 @@ async def announce(
         {"entity_id": zone_entity_id, "group_members": also_play_on},
     )
     try:
-        await asyncio.sleep(0.7)  # let the group settle before playback
+        # Scale settle window with group size: large groups (e.g. whole-house
+        # incl. 3-unit home-theater group) need longer to finish joining
+        # before TTS fires, or trailing zones miss the announcement.
+        await asyncio.sleep(0.7 + 0.2 * len(also_play_on))
         result = await speak_on_zone(zone_entity_id, message)
     finally:
         await asyncio.sleep(0.3)
