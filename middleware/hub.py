@@ -97,6 +97,10 @@ async def recipes_page(
     q: str | None = Query(None),
     course: str | None = Query(None),
 ):
+    # Pull everything once; filtering + sorting happen client-side over
+    # the whole 76-row dataset. Q/course server params are kept for
+    # back-compat with existing /recipes?course=X bookmarks but the new
+    # UI prefers in-page controls.
     where = []
     params: list = []
     if q:
@@ -105,10 +109,13 @@ async def recipes_page(
     if course:
         where.append("course ILIKE %s")
         params.append(course)
-    sql = "SELECT id, title, course, prep_time, image_url, user_rating FROM recipes"
+    sql = (
+        "SELECT id, title, course, dish_type, prep_time, image_url, "
+        "user_rating, tags, last_made, source_url, notes FROM recipes"
+    )
     if where:
         sql += " WHERE " + " AND ".join(where)
-    sql += " ORDER BY title LIMIT 200"
+    sql += " ORDER BY title LIMIT 500"
     recipes = await asyncio.to_thread(_query, sql, tuple(params))
     courses = await asyncio.to_thread(
         _query,

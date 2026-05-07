@@ -1,42 +1,236 @@
 {% extends "layout.html" %}
 {% block title %}Recipes — Fagley House Hub{% endblock %}
 {% block content %}
-<div class="d-flex justify-content-between align-items-center mb-3">
-  <h2 class="mb-0">Recipes <span class="badge bg-secondary">{{ recipes|length }}</span></h2>
-  <form class="d-flex" method="get" action="/recipes">
-    <input class="form-control form-control-sm me-2" type="search" name="q"
-           placeholder="search title…" value="{{ q or '' }}">
-    <select class="form-select form-select-sm me-2" name="course" onchange="this.form.submit()">
-      <option value="">All courses</option>
-      {% for c in courses %}
-        <option value="{{ c }}" {% if c == course %}selected{% endif %}>{{ c }}</option>
-      {% endfor %}
-    </select>
-    <button class="btn btn-sm btn-warning">Search</button>
-  </form>
+<style>
+  .recipe-row { cursor: pointer; transition: background .1s; }
+  .recipe-row:hover { background: #1a2128; }
+  .recipe-thumb {
+    width: 48px; height: 48px; object-fit: cover; border-radius: 6px;
+    border: 1px solid #2d3a47; background: #0f1419;
+  }
+  .recipe-thumb-empty {
+    width: 48px; height: 48px; border-radius: 6px;
+    background: linear-gradient(135deg, #1f2730, #2a3340);
+    border: 1px solid #2d3a47; display: grid; place-items: center;
+    color: #6c7a8a; font-size: 1.2rem;
+  }
+  th.sortable { cursor: pointer; user-select: none; }
+  th.sortable:hover { color: #f39c12 !important; }
+  th.sortable .arrow { opacity: .4; font-size: .75rem; }
+  th.sortable.sort-active .arrow { opacity: 1; color: #f39c12; }
+  .filter-pill {
+    display: inline-block; padding: 2px 8px; margin: 2px;
+    background: #2a3340; border-radius: 12px; font-size: .75rem;
+    border: 1px solid transparent; cursor: pointer;
+    color: #ccd; transition: all .1s;
+  }
+  .filter-pill:hover { border-color: #4d5d6e; }
+  .filter-pill.active { background: #f39c12; color: #1a1a1a; border-color: #f39c12; font-weight: 500; }
+  .star { color: #f39c12; font-size: .85rem; }
+  .star-empty { color: #3a4a5a; font-size: .85rem; }
+  @media (max-width: 768px) {
+    .col-hide-sm { display: none; }
+  }
+</style>
+
+<div class="d-flex justify-content-between align-items-center mb-2 flex-wrap gap-2">
+  <h2 class="mb-0">Recipes <span class="badge bg-secondary" id="recipeCount">{{ recipes|length }}</span></h2>
+  <input class="form-control form-control-sm" type="search" id="recipeSearch"
+         placeholder="search title, ingredient, source…" style="max-width: 320px">
 </div>
 
-<div class="row row-cols-1 row-cols-md-2 row-cols-lg-3 g-3">
-  {% for r in recipes %}
-    <div class="col">
-      <a href="/recipes/{{ r.id }}" class="text-decoration-none text-light">
-        <div class="card bg-dark border-secondary recipe-card h-100">
-          {% if r.image_url %}
-            <img src="{{ r.image_url }}" class="card-img-top" style="height:160px;object-fit:cover" alt="">
-          {% endif %}
-          <div class="card-body">
-            <h6 class="card-title mb-1">{{ r.title }}</h6>
-            <p class="card-text small text-secondary mb-0">
-              {% if r.course %}{{ r.course }}{% endif %}
-              {% if r.prep_time %} · {{ r.prep_time }} min{% endif %}
-              {% if r.user_rating %} · ⭐ {{ r.user_rating }}{% endif %}
-            </p>
-          </div>
-        </div>
-      </a>
-    </div>
-  {% else %}
-    <div class="col-12"><p class="text-secondary">No recipes match.</p></div>
-  {% endfor %}
+<div class="card bg-dark border-secondary p-2 mb-3 small">
+  <div class="d-flex flex-wrap gap-1 align-items-baseline">
+    <strong class="text-secondary me-2">Course:</strong>
+    <span class="filter-pill active" data-filter="course" data-value="">All</span>
+    {% for c in courses %}
+      <span class="filter-pill" data-filter="course" data-value="{{ c|lower }}">{{ c }}</span>
+    {% endfor %}
+  </div>
+  <div class="d-flex flex-wrap gap-1 align-items-baseline mt-1">
+    <strong class="text-secondary me-2">Type:</strong>
+    <span class="filter-pill active" data-filter="type" data-value="">All</span>
+    <span id="typeFilters"></span>
+  </div>
+  <div class="d-flex flex-wrap gap-2 align-items-baseline mt-1">
+    <strong class="text-secondary me-2">Rating:</strong>
+    <span class="filter-pill active" data-filter="rating" data-value="0">Any</span>
+    <span class="filter-pill" data-filter="rating" data-value="3">3★+</span>
+    <span class="filter-pill" data-filter="rating" data-value="4">4★+</span>
+    <span class="filter-pill" data-filter="rating" data-value="5">5★ only</span>
+    <strong class="text-secondary me-2 ms-3">Max prep:</strong>
+    <span class="filter-pill active" data-filter="prep" data-value="">Any</span>
+    <span class="filter-pill" data-filter="prep" data-value="15">≤15m</span>
+    <span class="filter-pill" data-filter="prep" data-value="30">≤30m</span>
+    <span class="filter-pill" data-filter="prep" data-value="60">≤60m</span>
+    <span class="filter-pill" data-filter="prep" data-value="90">≤90m</span>
+  </div>
 </div>
+
+<div class="table-responsive">
+  <table class="table table-dark table-hover align-middle" id="recipeTable">
+    <thead style="position:sticky; top:0; z-index:1; background:#1a2128">
+      <tr>
+        <th style="width:60px"></th>
+        <th class="sortable sort-active" data-sort="title">Title <span class="arrow">▲</span></th>
+        <th class="sortable col-hide-sm" data-sort="course">Course <span class="arrow"></span></th>
+        <th class="sortable col-hide-sm" data-sort="type">Type <span class="arrow"></span></th>
+        <th class="sortable text-end" data-sort="prep" style="width:90px">Prep <span class="arrow"></span></th>
+        <th class="sortable text-end" data-sort="rating" style="width:90px">Rating <span class="arrow"></span></th>
+        <th class="sortable col-hide-sm text-end" data-sort="last_made" style="width:110px">Last made <span class="arrow"></span></th>
+      </tr>
+    </thead>
+    <tbody id="recipeBody">
+      {% for r in recipes %}
+        <tr class="recipe-row" data-id="{{ r.id }}"
+            data-title="{{ r.title|lower }}"
+            data-course="{{ (r.course or '')|lower }}"
+            data-type="{{ (r.dish_type or '')|lower }}"
+            data-tags="{{ (r.tags or [])|join(',')|lower }}"
+            data-prep="{{ r.prep_time or 9999 }}"
+            data-rating="{{ r.user_rating or 0 }}"
+            data-last-made="{{ r.last_made.isoformat() if r.last_made else '' }}"
+            data-search="{{ ((r.title or '') ~ ' ' ~ (r.notes or '') ~ ' ' ~ (r.source_url or ''))|lower }}"
+            onclick="location.href='/recipes/{{ r.id }}'">
+          <td>
+            {% if r.image_url %}
+              <img src="{{ r.image_url }}" class="recipe-thumb" alt="" loading="lazy">
+            {% else %}
+              <div class="recipe-thumb-empty">🍽</div>
+            {% endif %}
+          </td>
+          <td>
+            <div class="text-light">{{ r.title }}</div>
+            {% if r.tags %}
+              <div class="small text-secondary">
+                {% for t in r.tags[:3] %}<span class="badge bg-secondary me-1" style="font-weight:400">{{ t }}</span>{% endfor %}
+              </div>
+            {% endif %}
+          </td>
+          <td class="col-hide-sm small text-secondary">{{ r.course or '' }}</td>
+          <td class="col-hide-sm small text-secondary">{{ r.dish_type or '' }}</td>
+          <td class="text-end small text-secondary">{% if r.prep_time %}{{ r.prep_time }}m{% endif %}</td>
+          <td class="text-end small">
+            {% if r.user_rating %}
+              {% set rounded = r.user_rating|round(0,'common')|int %}
+              {% for _ in range(rounded) %}<span class="star">★</span>{% endfor %}{% for _ in range(5 - rounded) %}<span class="star-empty">★</span>{% endfor %}
+            {% else %}<span class="text-secondary">—</span>{% endif %}
+          </td>
+          <td class="col-hide-sm text-end small text-secondary">
+            {% if r.last_made %}{{ r.last_made.strftime('%b %d') }}{% else %}—{% endif %}
+          </td>
+        </tr>
+      {% else %}
+        <tr><td colspan="7" class="text-center text-secondary py-4">No recipes match.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<script>
+(function(){
+  const tbody = document.getElementById('recipeBody');
+  const search = document.getElementById('recipeSearch');
+  const counter = document.getElementById('recipeCount');
+  const rows = Array.from(tbody.querySelectorAll('tr.recipe-row'));
+  const state = { course: '', type: '', rating: 0, prep: '', q: '', sort: 'title', dir: 1 };
+
+  // Build the type-filter pills from distinct dish_types + tags in
+  // the data so we don't hardcode anything that isn't actually present.
+  const types = new Set();
+  rows.forEach(r => {
+    const t = r.dataset.type;
+    if (t) t.split(',').forEach(x => x.trim() && types.add(x.trim()));
+    const tags = r.dataset.tags;
+    if (tags) tags.split(',').forEach(x => x.trim() && types.add(x.trim()));
+  });
+  const typeContainer = document.getElementById('typeFilters');
+  Array.from(types).sort().forEach(t => {
+    const el = document.createElement('span');
+    el.className = 'filter-pill';
+    el.dataset.filter = 'type';
+    el.dataset.value = t;
+    el.textContent = t;
+    typeContainer.appendChild(el);
+  });
+
+  function apply() {
+    let visible = 0;
+    rows.forEach(r => {
+      const okCourse = !state.course || r.dataset.course === state.course;
+      const okType = !state.type ||
+                     r.dataset.type === state.type ||
+                     r.dataset.tags.split(',').includes(state.type);
+      const okRating = !state.rating ||
+                       (state.rating === 5 ? parseFloat(r.dataset.rating) >= 5 :
+                        parseFloat(r.dataset.rating) >= state.rating);
+      const okPrep = !state.prep || parseInt(r.dataset.prep) <= parseInt(state.prep);
+      const okSearch = !state.q || r.dataset.search.indexOf(state.q) >= 0;
+      const show = okCourse && okType && okRating && okPrep && okSearch;
+      r.style.display = show ? '' : 'none';
+      if (show) visible++;
+    });
+    counter.textContent = visible;
+    sortRows();
+  }
+
+  function sortRows() {
+    const visible = rows.filter(r => r.style.display !== 'none');
+    visible.sort((a, b) => {
+      let av, bv;
+      switch (state.sort) {
+        case 'prep': av = parseInt(a.dataset.prep); bv = parseInt(b.dataset.prep); break;
+        case 'rating': av = parseFloat(a.dataset.rating); bv = parseFloat(b.dataset.rating); break;
+        case 'last_made': av = a.dataset.lastMade || ''; bv = b.dataset.lastMade || ''; break;
+        case 'course': av = a.dataset.course; bv = b.dataset.course; break;
+        case 'type': av = a.dataset.type; bv = b.dataset.type; break;
+        default: av = a.dataset.title; bv = b.dataset.title;
+      }
+      if (av < bv) return -state.dir;
+      if (av > bv) return state.dir;
+      return 0;
+    });
+    visible.forEach(r => tbody.appendChild(r));
+  }
+
+  document.querySelectorAll('.filter-pill').forEach(p => {
+    p.addEventListener('click', () => {
+      const f = p.dataset.filter;
+      document.querySelectorAll(`.filter-pill[data-filter="${f}"]`)
+        .forEach(x => x.classList.remove('active'));
+      p.classList.add('active');
+      state[f] = p.dataset.value === '0' ? 0 : (p.dataset.value || '');
+      if (f === 'rating') state[f] = parseInt(p.dataset.value) || 0;
+      apply();
+    });
+  });
+
+  search.addEventListener('input', () => {
+    state.q = search.value.toLowerCase().trim();
+    apply();
+  });
+
+  document.querySelectorAll('th.sortable').forEach(th => {
+    th.addEventListener('click', () => {
+      const k = th.dataset.sort;
+      if (state.sort === k) {
+        state.dir = -state.dir;
+      } else {
+        state.sort = k;
+        state.dir = 1;
+      }
+      document.querySelectorAll('th.sortable').forEach(x => {
+        x.classList.toggle('sort-active', x.dataset.sort === state.sort);
+        const arrow = x.querySelector('.arrow');
+        if (x.dataset.sort === state.sort) {
+          arrow.textContent = state.dir > 0 ? '▲' : '▼';
+        } else {
+          arrow.textContent = '';
+        }
+      });
+      sortRows();
+    });
+  });
+})();
+</script>
 {% endblock %}
