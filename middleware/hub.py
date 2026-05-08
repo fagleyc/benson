@@ -314,6 +314,76 @@ async def benson_admin(request: Request):
     )
 
 
+def _gather_schedules_sync() -> list[dict]:
+    """List all benson-*.timer units with their schedule + last/next
+    fire + the service they trigger + that service's last result."""
+    import subprocess as _sp
+
+    def _show(unit: str, props: list[str]) -> dict:
+        # `-p=Foo` (with equals) is silently ignored by some systemctl
+        # versions on Linux 6+ — produces empty stdout. `--property=Foo`
+        # works reliably. Found this on the DGX 2026-05-08.
+        try:
+            r = _sp.run(
+                ["systemctl", "show", unit, "--no-pager",
+                 *(f"--property={p}" for p in props)],
+                capture_output=True, text=True, timeout=5,
+            )
+        except Exception:
+            return {}
+        result: dict = {}
+        for line in r.stdout.splitlines():
+            if "=" in line:
+                k, _, v = line.partition("=")
+                result[k] = v
+        return result
+
+    # Find all benson timer units.
+    try:
+        r = _sp.run(
+            ["systemctl", "list-unit-files", "benson-*.timer",
+             "--no-legend", "--no-pager"],
+            capture_output=True, text=True, timeout=5,
+        )
+    except Exception:
+        return []
+    timer_units = []
+    for line in r.stdout.splitlines():
+        parts = line.split()
+        if parts and parts[0].endswith(".timer"):
+            timer_units.append(parts[0])
+
+    out: list[dict] = []
+    for tu in sorted(timer_units):
+        timer = _show(tu, [
+            "Unit", "Description", "LastTriggerUSec",
+            "NextElapseUSecRealtime", "ActiveState",
+        ])
+        svc_name = timer.get("Unit") or tu.replace(".timer", ".service")
+        svc = _show(svc_name, [
+            "Description", "Result", "ActiveState",
+            "ExecMainStartTimestamp", "ExecMainExitTimestamp",
+        ])
+        # "Now" fire info: NextElapseUSecRealtime can be blank when the
+        # timer is one-shot or just fired; fall back to "—".
+        next_fire = (timer.get("NextElapseUSecRealtime") or "").strip()
+        last_fire = (timer.get("LastTriggerUSec") or "").strip()
+        # Friendly "what does it do" — prefer the service description
+        # (more specific) but fall back to the timer's.
+        what = (svc.get("Description") or timer.get("Description") or "").strip()
+        out.append({
+            "name": tu.replace(".timer", "").replace("benson-", ""),
+            "unit_timer": tu,
+            "unit_service": svc_name,
+            "description": what,
+            "last_fire": last_fire if last_fire and last_fire != "n/a" else "—",
+            "next_fire": next_fire or "—",
+            "last_result": svc.get("Result") or "—",
+            "active": svc.get("ActiveState") or "inactive",
+        })
+    return out
+
+
 def _gather_benson_admin_sync() -> dict:
     """Collect everything the /admin/benson page renders. Sync calls only —
     wrapped in to_thread by the route handler."""
@@ -502,6 +572,16 @@ def _gather_benson_admin_sync() -> dict:
     except Exception as e:
         logger.warning(f"recent conversations failed: {e}")
         out["conversations"] = []
+
+    # ─── Scheduled jobs ──────────────────────────────────────────────────
+    # All benson-*.timer units + the service each triggers, with last
+    # fire / next fire / outcome. Casey 2026-05-08: 'add a summary of
+    # scheduled things so I can see them and manage them.'
+    try:
+        out["schedules"] = _gather_schedules_sync()
+    except Exception as e:
+        logger.warning(f"schedule collect failed: {e}")
+        out["schedules"] = []
 
     # ─── Memory structure ────────────────────────────────────────────────
     # STM file inventory

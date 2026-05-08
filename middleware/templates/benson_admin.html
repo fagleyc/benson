@@ -139,6 +139,62 @@
   </div>
 </div>
 
+<!-- ─── Scheduled jobs ─────────────────────────────────────────── -->
+<div class="card bg-dark border-secondary p-3 mb-3">
+  <div class="d-flex justify-content-between align-items-baseline mb-2">
+    <h5 class="mb-0">Scheduled jobs
+      <span class="text-secondary small fw-normal">— systemd timers in <code>benson-*.timer</code></span>
+    </h5>
+    <span class="text-secondary small">{{ schedules|length }} timer{% if schedules|length != 1 %}s{% endif %}</span>
+  </div>
+
+  {% if not schedules %}
+    <div class="text-secondary small fst-italic">No benson-*.timer units found.</div>
+  {% else %}
+    <table class="table table-dark table-sm align-middle mb-0" style="font-size:.875rem">
+      <thead>
+        <tr>
+          <th>Job</th>
+          <th>What it does</th>
+          <th class="text-nowrap">Last fire</th>
+          <th class="text-nowrap">Next fire</th>
+          <th>Result</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for s in schedules %}
+        <tr>
+          <td><code>{{ s.name }}</code></td>
+          <td class="text-light">{{ s.description }}</td>
+          <td class="text-secondary text-nowrap">{{ s.last_fire }}</td>
+          <td class="text-secondary text-nowrap">{{ s.next_fire }}</td>
+          <td>
+            {% if s.active == 'active' %}
+              <span class="badge bg-info text-dark">running</span>
+            {% elif s.last_result == 'success' %}
+              <span class="badge bg-success">success</span>
+            {% elif s.last_result == 'failed' %}
+              <span class="badge bg-danger">failed</span>
+            {% elif s.last_result and s.last_result != '—' %}
+              <span class="badge bg-warning text-dark">{{ s.last_result }}</span>
+            {% else %}
+              <span class="text-secondary small">—</span>
+            {% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    <div class="small text-secondary mt-2">
+      Manage:
+      <code>sudo systemctl list-timers benson-*.timer</code> ·
+      <code>sudo systemctl start benson-&lt;name&gt;.service</code> (run now) ·
+      <code>sudo systemctl disable --now benson-&lt;name&gt;.timer</code> (turn off) ·
+      <code>journalctl -u benson-&lt;name&gt;</code> (last fire output)
+    </div>
+  {% endif %}
+</div>
+
 <!-- ─── Conversation log ─────────────────────────────────────────── -->
 <div class="card bg-dark border-secondary p-3 mb-3">
   <div class="d-flex justify-content-between align-items-baseline mb-2">
