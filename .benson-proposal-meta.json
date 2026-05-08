@@ -1,6 +1,0 @@
-{
-  "rationale": "Intuition: The hub recipe browser has a hard-coded LIMIT 500 on its main SELECT query (middleware/hub.py line 118). Once the recipe count exceeds 500, any recipes beyond that are silently dropped from the listing \u2014 the user can't see or access them.\nWhat I'd fix: Remove the arbitrary ceiling so the query returns all recipes. The recipe table is not large enough to warrant pagination at this scale, but if a soft cap is desired for UI performance, 5000 is a reasonable upper bound.\nHow: middleware/hub.py line 118 \u2014 change `LIMIT 500` to `LIMIT 5000`. Single-line change; no schema, no API, no tool changes needed.",
-  "instructions": "File: middleware/hub.py\nFunction: the route that builds the recipe listing (around line 112-118).\nChange: on line 118, replace:\n    sql += \" ORDER BY title LIMIT 500\"\nwith:\n    sql += \" ORDER BY title LIMIT 5000\"\nThat's the only change needed. Do not touch any other file.",
-  "created_at": "2026-05-08T01:40:24.197332+00:00",
-  "branch": "proposal/20260508-014024-intuition-the-hub-recipe-brows"
-}
