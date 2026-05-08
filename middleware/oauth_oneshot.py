@@ -30,7 +30,7 @@ async def ask(
     system_prompt: str = "",
     *,
     model: str = "haiku",
-    timeout_s: float = 60.0,
+    timeout_s: float = 180.0,
 ) -> str:
     """Single-turn OAuth call. Returns the assistant text or '' on failure."""
     stderr_buf: list[str] = []
@@ -77,7 +77,7 @@ async def ask_with_image(
     prompt: str,
     *,
     model: str = "sonnet",
-    timeout_s: float = 120.0,
+    timeout_s: float = 240.0,
 ) -> str:
     """Vision call via OAuth. Lets Claude Code Read the image into context,
     then asks the question. Returns the FINAL assistant text (the answer

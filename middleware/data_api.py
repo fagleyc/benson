@@ -903,13 +903,18 @@ async def calendar_upcoming(days: int = Query(2, ge=1, le=30)) -> dict:
 
 
 # ─── Weather (current + 5-day forecast) ──────────────────────────────────
+_weather_cache: dict = {}
+
 @router.get("/weather")
 async def weather_now(days: int = 5) -> dict:
     """Live weather from HA's weather.fagley_home + 5-day daily forecast."""
     from ha_client import get_state as ha_get_state, call_service as ha_call
     try:
-        s = await ha_get_state("weather.fagley_home")
+        s = await ha_get_state("weather.fagley_home", timeout_s=3)
     except Exception as e:
+        cached = _weather_cache.get("last")
+        if cached:
+            return {**cached, "stale": True, "error": str(e)}
         raise HTTPException(503, f"weather entity unavailable: {e}")
     a = s.get("attributes", {})
     current = {
@@ -933,7 +938,9 @@ async def weather_now(days: int = 5) -> dict:
         forecast = days_data[:days]
     except Exception:
         pass
-    return {"current": current, "forecast": forecast}
+    payload = {"current": current, "forecast": forecast}
+    _weather_cache["last"] = payload
+    return payload
 
 
 # ─── Music (via Music Assistant + HA) ────────────────────────────────────
