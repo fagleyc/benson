@@ -21,20 +21,51 @@ from pathlib import Path
 # Make the middleware importable.
 sys.path.insert(0, "/opt/benson/middleware")
 
-# Load env from /etc/benson/env (the systemd unit also does this, but
-# allow ad-hoc CLI invocation to work).
+# Load env from /etc/benson/env when invoked outside systemd. The
+# unit's EnvironmentFile= directive already populates the env when
+# running under systemd, and the file is 0600 root:root so the
+# casey-user systemd path raises PermissionError on direct read.
+# Same fix as sunday_chore_report.py (2026-05-03).
 ENV_FILE = Path("/etc/benson/env")
 if ENV_FILE.exists():
-    for line in ENV_FILE.read_text().splitlines():
-        line = line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        k, _, v = line.partition("=")
-        os.environ.setdefault(k.strip(), v.strip())
+    try:
+        for line in ENV_FILE.read_text().splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, _, v = line.partition("=")
+            os.environ.setdefault(k.strip(), v.strip())
+    except PermissionError:
+        pass
 
-from oauth_oneshot import ask as oauth_ask  # noqa: E402
 from self_modify import read_my_conversations, read_my_logs  # noqa: E402
 from signal_handler import send_signal_message  # noqa: E402
+
+# oauth_oneshot.ask via the SDK keeps hitting "Control request timeout:
+# initialize" from cold-start scripts. The bundled CLI in --print mode
+# is the workaround that's been reliable for batch scripts (recipe
+# classification, etc.). Same pattern here.
+import subprocess as _sp
+_CLAUDE_BIN = "/opt/benson/middleware/venv/lib/python3.12/site-packages/claude_agent_sdk/_bundled/claude"
+
+
+def claude_print(prompt: str, model: str = "sonnet", timeout_s: int = 240) -> str:
+    """Pipe `prompt` via stdin to the bundled CLI in --print mode.
+    Using stdin (vs -p "<prompt>") avoids silent failures on long
+    prompts — at ~45KB the CLI was returning empty without error,
+    likely due to argv handling. Stdin works at any length."""
+    env = dict(os.environ)
+    env.pop("ANTHROPIC_API_KEY", None)  # force OAuth path
+    env["HOME"] = "/home/casey"          # where .claude/.credentials.json lives
+    out = _sp.run(
+        [_CLAUDE_BIN, "--print", "--model", model,
+         "--permission-mode", "bypassPermissions"],
+        cwd="/tmp", env=env, input=prompt,
+        capture_output=True, text=True, timeout=timeout_s,
+    )
+    if out.returncode != 0:
+        raise RuntimeError(f"claude exit {out.returncode}: stderr={out.stderr[:300]}")
+    return out.stdout
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger("benson.weekly_review")
@@ -105,9 +136,13 @@ async def main() -> int:
     log.info(f"reviewing {len(rows)} conversations")
     prompt = REVIEW_PROMPT.replace("{conversations}", _format_conversations(rows))
 
-    review = await oauth_ask(prompt, model="sonnet", timeout_s=180)
+    try:
+        review = await asyncio.to_thread(claude_print, prompt, "sonnet", 240)
+    except Exception as e:
+        log.warning(f"claude_print failed: {e}")
+        return 1
     if not review:
-        log.warning("oauth_ask returned empty; aborting")
+        log.warning("claude returned empty; aborting")
         return 1
 
     # Strip optional ```json fences.
