@@ -115,7 +115,7 @@ async def recipes_page(
     )
     if where:
         sql += " WHERE " + " AND ".join(where)
-    sql += " ORDER BY title LIMIT 500"
+    sql += " ORDER BY title LIMIT 5000"
     recipes = await asyncio.to_thread(_query, sql, tuple(params))
     courses = await asyncio.to_thread(
         _query,
