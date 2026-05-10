@@ -185,7 +185,7 @@
     </div>
   </div>
 
-  <div class="cook-layout" id="cookLayout">
+  <div class="cook-layout" id="cookLayout" data-recipe-id="{{ recipe.id }}">
     <aside class="ingredients-rail" id="ingredientsRail">
       <button class="rail-header" id="railHeader" type="button" aria-expanded="false" aria-controls="railList">
         <span>Ingredients</span>
@@ -194,7 +194,7 @@
       <div class="rail-list" id="railList">
         {% for ing in recipe.ingredients %}
           {% set ing_text = ing.text if ing is mapping else ing %}
-          <div class="ingredient-row" data-name="{{ ing_text }}">{{ ing_text }}</div>
+          <div class="ingredient-row" data-ingredient-index="{{ loop.index0 }}">{{ ing_text }}</div>
         {% else %}
           <div class="ingredient-row" style="opacity:0.45">None recorded.</div>
         {% endfor %}
@@ -229,7 +229,7 @@ const steps = Array.from(document.querySelectorAll('.step[data-idx]'));
 const progress = document.getElementById('progress');
 const cookLayout = document.getElementById('cookLayout');
 const railHeader = document.getElementById('railHeader');
-const ingredientRows = Array.from(document.querySelectorAll('.ingredient-row[data-name]'));
+const ingredientRows = Array.from(document.querySelectorAll('.ingredient-row[data-ingredient-index]'));
 
 // Wake lock — keep screen on while cooking
 async function requestWakeLock() {
@@ -239,49 +239,38 @@ requestWakeLock();
 document.addEventListener('visibilitychange', () => { if (!document.hidden) requestWakeLock(); });
 
 // ─── Ingredient highlighting ─────────────────────────────────────────
-// Strip numbers/units/prep-words so "1 cup all-purpose flour" matches "flour".
-const UNIT_STOPWORDS = new Set([
-  'cup','cups','tbsp','tbs','tsp','tablespoon','tablespoons','teaspoon','teaspoons',
-  'oz','ounce','ounces','lb','lbs','pound','pounds','gram','grams','kg','ml',
-  'liter','liters','litre','litres','quart','quarts','pint','pints','gallon','gallons',
-  'pinch','dash','clove','cloves','can','cans','package','packages','pkg','jar','jars',
-  'bunch','bunches','head','heads','stick','sticks','slice','slices','sprig','sprigs',
-  'small','medium','large','about','approximately','plus','optional','taste','room',
-  'temperature','fresh','dried','chopped','minced','diced','sliced','grated','peeled',
-  'crushed','ground','whole','halved','quartered','and','the','for','with','from','into'
-]);
-
-function tokensFor(text) {
-  return (text || '').toLowerCase()
-    .replace(/[^a-z\s-]/g, ' ')
-    .split(/\s+/)
-    .map(t => t.trim())
-    .filter(t => t.length >= 3 && !UNIT_STOPWORDS.has(t));
+// Server-precomputed step → ingredient-indices map (Haiku-resolved with
+// full recipe context, so "the dough" / "the sauce" / "remaining
+// mixture" resolve correctly back to their underlying ingredients).
+// Loaded async; until it lands cookMap is {} and highlighting is a
+// no-op — the cook page is fully usable without the highlight.
+let cookMap = {};
+const RECIPE_ID = cookLayout && cookLayout.dataset.recipeId;
+if (RECIPE_ID) {
+  fetch(`/api/recipes/${RECIPE_ID}/cook_map`, { credentials: 'same-origin' })
+    .then(r => r.ok ? r.json() : {})
+    .then(data => {
+      cookMap = (data && typeof data === 'object' && !data.error) ? data : {};
+      // Re-apply for whichever step is currently visible.
+      const activeIdx = dots.findIndex(d => d.classList.contains('active'));
+      highlightIngredientsForStep(activeIdx >= 0 ? activeIdx : 0);
+    })
+    .catch(() => { cookMap = {}; });
 }
 
-// Pre-compute matchable tokens for each ingredient row (one pass on load).
-const ingredientTokenLists = ingredientRows.map(row => {
-  const name = row.dataset.name || row.textContent || '';
-  return tokensFor(name);
-});
-
-function highlightIngredientsForStep(stepIndex) {
-  const card = steps[stepIndex];
-  if (!card) return;
-  const stepBody = card.querySelector('.step-body');
-  const stepText = (stepBody ? stepBody.textContent : '').toLowerCase();
-  let anyMatch = false;
-  const matches = ingredientTokenLists.map(toks => {
-    if (!toks.length) return false;
-    const hit = toks.some(t => stepText.includes(t));
-    if (hit) anyMatch = true;
-    return hit;
-  });
-  ingredientRows.forEach((row, i) => {
-    row.classList.remove('ing-active', 'ing-dim');
-    // No matches at all (e.g. mise-en-place / intro step) → leave clean, full opacity.
-    if (!anyMatch) return;
-    row.classList.add(matches[i] ? 'ing-active' : 'ing-dim');
+function highlightIngredientsForStep(stepIdx) {
+  const active = cookMap[String(stepIdx)] || cookMap[stepIdx] || [];
+  ingredientRows.forEach(el => {
+    const idx = parseInt(el.dataset.ingredientIndex, 10);
+    if (active.length === 0) {
+      el.classList.remove('ing-active', 'ing-dim');
+    } else if (active.includes(idx)) {
+      el.classList.add('ing-active');
+      el.classList.remove('ing-dim');
+    } else {
+      el.classList.add('ing-dim');
+      el.classList.remove('ing-active');
+    }
   });
 }
 
