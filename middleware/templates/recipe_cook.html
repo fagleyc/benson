@@ -15,6 +15,7 @@
     --accent: #f4ecd8;
     --pill-bg: rgba(244, 236, 216, 0.10);
     --pill-bg-active: rgba(244, 236, 216, 0.18);
+    --header-offset: calc(env(safe-area-inset-top, 16px) + 60px);
   }
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   html, body {
@@ -47,23 +48,57 @@
     text-decoration: none;
   }
   .close-btn:hover { background: rgba(0,0,0,0.55); }
-  .tabs { display: inline-flex; background: var(--pill-bg); border-radius: 100px; padding: 4px; }
-  .tab {
-    padding: 8px 22px; border-radius: 100px; cursor: pointer;
-    font-size: 0.95rem; font-weight: 500; color: var(--fg-muted);
-    background: transparent; border: none;
-    transition: background 120ms, color 120ms;
-  }
-  .tab.active { background: var(--pill-bg-active); color: var(--fg); }
 
-  .stage {
-    height: 100vh;
+  /* Two-pane cook layout: persistent ingredients rail + steps pane */
+  .cook-layout {
+    position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+    padding-top: var(--header-offset);
+    display: flex; flex-direction: row;
+    height: 100vh; overflow: hidden;
+  }
+
+  .ingredients-rail {
+    width: 260px;
+    flex-shrink: 0;
+    overflow-y: auto;
+    padding: 14px 18px 24px;
+    background: rgba(0, 0, 0, 0.18);
+    border-right: 1px solid rgba(244, 236, 216, 0.08);
+  }
+  .ingredients-rail::-webkit-scrollbar { width: 4px; }
+  .ingredients-rail::-webkit-scrollbar-thumb {
+    background: rgba(244, 236, 216, 0.15); border-radius: 2px;
+  }
+  .rail-header {
+    font-size: 0.85rem; font-weight: 600; letter-spacing: 0.08em;
+    text-transform: uppercase; color: var(--fg-muted);
+    margin: 0 0 10px;
+    background: none; border: none; width: 100%;
+    text-align: left; cursor: default;
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0;
+  }
+  .rail-toggle-icon { display: none; }
+  .ingredient-row {
+    font-size: 0.95rem;
+    font-weight: 400;
+    line-height: 1.4;
+    padding: 8px 0;
+    border-bottom: 1px solid rgba(244, 236, 216, 0.08);
+    transition: opacity 180ms, font-weight 180ms, color 180ms;
+  }
+  .ingredient-row:last-child { border-bottom: none; }
+  .ingredient-row.ing-active { font-weight: 700; opacity: 1; color: var(--fg); }
+  .ingredient-row.ing-dim { opacity: 0.45; }
+
+  .steps-pane {
+    flex: 1;
     overflow-y: auto; overflow-x: hidden;
     scroll-snap-type: y mandatory;
     scroll-behavior: smooth;
-    padding: 130px 28px 24px;
+    padding: 12px 28px 24px;
   }
-  .stage::-webkit-scrollbar { display: none; }
+  .steps-pane::-webkit-scrollbar { display: none; }
 
   /* Directions: each step centered vertically + horizontally; next step peeks below */
   .step {
@@ -89,35 +124,13 @@
   .step.peek .step-label { color: var(--fg-dim); }
   .step.peek .step-body { color: var(--fg-dim); font-weight: 600; }
 
-  /* Ingredients view */
-  .ingredients {
-    display: none;
-    padding: 8px 0;
-  }
-  .ingredients h2 {
-    font-size: 1rem; font-weight: 600; letter-spacing: 0.06em;
-    text-transform: uppercase; color: var(--fg-muted);
-    margin: 0 0 16px;
-  }
-  .ingredients ul { list-style: none; margin: 0; padding: 0; }
-  .ingredients li {
-    font-size: clamp(1.15rem, 2vw, 1.4rem);
-    font-weight: 500;
-    line-height: 1.5;
-    padding: 10px 0;
-    border-bottom: 1px solid rgba(244, 236, 216, 0.10);
-  }
-  .ingredients li:last-child { border-bottom: none; }
-
-  body.view-ingredients .stage > .step { display: none; }
-  body.view-ingredients .ingredients { display: block; }
-
   /* Bottom progress dots */
   .progress {
     position: fixed; bottom: 18px; left: 0; right: 0;
     display: flex; justify-content: center; gap: 8px;
     pointer-events: none;
     padding-bottom: env(safe-area-inset-bottom, 0);
+    z-index: 5;
   }
   .progress.hide { display: none; }
   .dot {
@@ -126,6 +139,41 @@
     transition: background 200ms, transform 200ms;
   }
   .dot.active { background: var(--fg); transform: scale(1.4); }
+
+  /* Narrow viewports — collapse rail into accordion above steps */
+  @media (max-width: 640px) {
+    .cook-layout { flex-direction: column; }
+    .ingredients-rail {
+      width: 100%;
+      flex-shrink: 0;
+      max-height: 44px;
+      overflow: hidden;
+      padding: 0 18px;
+      border-right: none;
+      border-bottom: 1px solid rgba(244, 236, 216, 0.10);
+      transition: max-height 240ms ease, padding 240ms ease;
+    }
+    .cook-layout.rail-open .ingredients-rail {
+      max-height: 40vh;
+      overflow-y: auto;
+      padding: 8px 18px 14px;
+    }
+    .rail-header {
+      cursor: pointer;
+      padding: 12px 0;
+      margin: 0;
+      color: var(--fg);
+    }
+    .rail-toggle-icon {
+      display: inline-block;
+      transition: transform 220ms;
+      font-size: 0.8rem;
+      opacity: 0.75;
+    }
+    .cook-layout.rail-open .rail-toggle-icon { transform: rotate(180deg); }
+    .steps-pane { padding: 14px 22px 24px; }
+    .step { min-height: 60vh; }
+  }
 </style>
 </head>
 <body>
@@ -135,34 +183,36 @@
       <div class="title">{{ recipe.title }}</div>
       <a href="/recipes/{{ recipe.id }}" class="close-btn" aria-label="Close">✕</a>
     </div>
-    <div class="tabs" role="tablist">
-      <button class="tab" data-view="ingredients" role="tab">Ingredients</button>
-      <button class="tab active" data-view="directions" role="tab">Directions</button>
-    </div>
   </div>
 
-  <div class="stage" id="stage">
-    {% for step in recipe.steps %}
-      <section class="step" data-idx="{{ loop.index0 }}">
-        <div class="step-label">Step {{ loop.index }}</div>
-        <div class="step-body">{{ step }}</div>
-      </section>
-    {% else %}
-      <section class="step">
-        <div class="step-label">No directions recorded</div>
-        <div class="step-body">This recipe has no steps in the database yet.</div>
-      </section>
-    {% endfor %}
-
-    <div class="ingredients">
-      <h2>Ingredients</h2>
-      <ul>
+  <div class="cook-layout" id="cookLayout">
+    <aside class="ingredients-rail" id="ingredientsRail">
+      <button class="rail-header" id="railHeader" type="button" aria-expanded="false" aria-controls="railList">
+        <span>Ingredients</span>
+        <span class="rail-toggle-icon" aria-hidden="true">▾</span>
+      </button>
+      <div class="rail-list" id="railList">
         {% for ing in recipe.ingredients %}
-          <li>{{ ing.text if ing is mapping else ing }}</li>
+          {% set ing_text = ing.text if ing is mapping else ing %}
+          <div class="ingredient-row" data-name="{{ ing_text }}">{{ ing_text }}</div>
         {% else %}
-          <li class="text-muted">None recorded.</li>
+          <div class="ingredient-row" style="opacity:0.45">None recorded.</div>
         {% endfor %}
-      </ul>
+      </div>
+    </aside>
+
+    <div class="steps-pane" id="stage">
+      {% for step in recipe.steps %}
+        <section class="step" data-idx="{{ loop.index0 }}">
+          <div class="step-label">Step {{ loop.index }}</div>
+          <div class="step-body">{{ step }}</div>
+        </section>
+      {% else %}
+        <section class="step">
+          <div class="step-label">No directions recorded</div>
+          <div class="step-body">This recipe has no steps in the database yet.</div>
+        </section>
+      {% endfor %}
     </div>
   </div>
 
@@ -176,8 +226,10 @@
 const stage = document.getElementById('stage');
 const dots = Array.from(document.querySelectorAll('.progress .dot'));
 const steps = Array.from(document.querySelectorAll('.step[data-idx]'));
-const tabs = document.querySelectorAll('.tab');
 const progress = document.getElementById('progress');
+const cookLayout = document.getElementById('cookLayout');
+const railHeader = document.getElementById('railHeader');
+const ingredientRows = Array.from(document.querySelectorAll('.ingredient-row[data-name]'));
 
 // Wake lock — keep screen on while cooking
 async function requestWakeLock() {
@@ -186,6 +238,53 @@ async function requestWakeLock() {
 requestWakeLock();
 document.addEventListener('visibilitychange', () => { if (!document.hidden) requestWakeLock(); });
 
+// ─── Ingredient highlighting ─────────────────────────────────────────
+// Strip numbers/units/prep-words so "1 cup all-purpose flour" matches "flour".
+const UNIT_STOPWORDS = new Set([
+  'cup','cups','tbsp','tbs','tsp','tablespoon','tablespoons','teaspoon','teaspoons',
+  'oz','ounce','ounces','lb','lbs','pound','pounds','gram','grams','kg','ml',
+  'liter','liters','litre','litres','quart','quarts','pint','pints','gallon','gallons',
+  'pinch','dash','clove','cloves','can','cans','package','packages','pkg','jar','jars',
+  'bunch','bunches','head','heads','stick','sticks','slice','slices','sprig','sprigs',
+  'small','medium','large','about','approximately','plus','optional','taste','room',
+  'temperature','fresh','dried','chopped','minced','diced','sliced','grated','peeled',
+  'crushed','ground','whole','halved','quartered','and','the','for','with','from','into'
+]);
+
+function tokensFor(text) {
+  return (text || '').toLowerCase()
+    .replace(/[^a-z\s-]/g, ' ')
+    .split(/\s+/)
+    .map(t => t.trim())
+    .filter(t => t.length >= 3 && !UNIT_STOPWORDS.has(t));
+}
+
+// Pre-compute matchable tokens for each ingredient row (one pass on load).
+const ingredientTokenLists = ingredientRows.map(row => {
+  const name = row.dataset.name || row.textContent || '';
+  return tokensFor(name);
+});
+
+function highlightIngredientsForStep(stepIndex) {
+  const card = steps[stepIndex];
+  if (!card) return;
+  const stepBody = card.querySelector('.step-body');
+  const stepText = (stepBody ? stepBody.textContent : '').toLowerCase();
+  let anyMatch = false;
+  const matches = ingredientTokenLists.map(toks => {
+    if (!toks.length) return false;
+    const hit = toks.some(t => stepText.includes(t));
+    if (hit) anyMatch = true;
+    return hit;
+  });
+  ingredientRows.forEach((row, i) => {
+    row.classList.remove('ing-active', 'ing-dim');
+    // No matches at all (e.g. mise-en-place / intro step) → leave clean, full opacity.
+    if (!anyMatch) return;
+    row.classList.add(matches[i] ? 'ing-active' : 'ing-dim');
+  });
+}
+
 // Highlight current step + dot via IntersectionObserver
 const io = new IntersectionObserver((entries) => {
   entries.forEach(e => {
@@ -193,42 +292,38 @@ const io = new IntersectionObserver((entries) => {
       const idx = parseInt(e.target.dataset.idx, 10);
       steps.forEach(s => s.classList.toggle('peek', s !== e.target));
       dots.forEach((d, i) => d.classList.toggle('active', i === idx));
+      if (!Number.isNaN(idx)) highlightIngredientsForStep(idx);
     }
   });
 }, { root: stage, threshold: [0.55, 0.85] });
 steps.forEach(s => io.observe(s));
 // Initial peek state — dim everything except first
 steps.forEach((s, i) => s.classList.toggle('peek', i !== 0));
+highlightIngredientsForStep(0);
 
-// Tab switching
-tabs.forEach(t => t.addEventListener('click', () => {
-  tabs.forEach(x => x.classList.remove('active'));
-  t.classList.add('active');
-  if (t.dataset.view === 'ingredients') {
-    document.body.classList.add('view-ingredients');
-    progress.classList.add('hide');
-  } else {
-    document.body.classList.remove('view-ingredients');
-    progress.classList.remove('hide');
-  }
-}));
+// Mobile rail accordion toggle
+if (railHeader) {
+  railHeader.addEventListener('click', () => {
+    const isOpen = cookLayout.classList.toggle('rail-open');
+    railHeader.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+  });
+}
 
 // Keyboard nav: ↓/Space/PgDn = next, ↑/PgUp = prev, Esc = close
 function nextStep(delta) {
   const cur = dots.findIndex(d => d.classList.contains('active'));
   const next = Math.max(0, Math.min(steps.length - 1, cur + delta));
   steps[next].scrollIntoView({ behavior: 'smooth', block: 'start' });
+  highlightIngredientsForStep(next);
 }
 document.addEventListener('keydown', (e) => {
-  if (document.body.classList.contains('view-ingredients')) return;
   if (e.key === 'ArrowDown' || e.key === ' ' || e.key === 'PageDown') { e.preventDefault(); nextStep(1); }
   else if (e.key === 'ArrowUp' || e.key === 'PageUp') { e.preventDefault(); nextStep(-1); }
   else if (e.key === 'Escape') { window.location = '/recipes/{{ recipe.id }}'; }
 });
 
-// Tap-to-advance: tap bottom 30% of screen → next, top 25% → prev
+// Tap-to-advance: tap bottom 30% of pane → next, top 25% → prev
 stage.addEventListener('click', (e) => {
-  if (document.body.classList.contains('view-ingredients')) return;
   const y = e.clientY / window.innerHeight;
   if (y > 0.70) nextStep(1);
   else if (y < 0.25) nextStep(-1);
