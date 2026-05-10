@@ -10,6 +10,7 @@ Routes:
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from pathlib import Path
@@ -18,6 +19,7 @@ from typing import Any
 from fastapi import FastAPI, HTTPException, Request
 
 import agent_session
+import memory_hooks
 from oauth_agent import run_agent
 from claude_models import ModelTier, select as select_model
 from config import PROMPT_PATH, configure_logging
@@ -192,7 +194,11 @@ async def handle_conversation(request: Request) -> dict[str, Any]:
     try:
         # Auto-extraction disabled 2026-04-26 — replaced by file-based memory
         # tools (memory_list/read/write/append) that the agent curates itself.
-        pass
+        # Deterministic stop-hook (2026-05-10): a haiku call distills 0-2
+        # durable facts from `response` into STM out-of-band. Gated by
+        # MEMORY_STOP_HOOK_ENABLED (default on); the hook itself is
+        # exception-safe so a failed extraction can't affect the turn.
+        asyncio.create_task(memory_hooks.session_stop_hook(response))
     except Exception as e:
         logger.warning(f"Memory extraction skipped: {e}")
 
