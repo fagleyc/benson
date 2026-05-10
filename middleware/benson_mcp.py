@@ -6,6 +6,7 @@ the existing async impls and JSON-encode the result for the model.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from typing import Any
@@ -13,6 +14,7 @@ from typing import Any
 from claude_agent_sdk import SdkMcpTool, create_sdk_mcp_server, tool
 
 from agent_tools import IMPL, TOOLS
+import memory_hooks
 
 logger = logging.getLogger("benson.mcp")
 
@@ -81,6 +83,10 @@ def _make_wrapper(name: str, description: str, input_schema: dict):
                 "content": [{"type": "text", "text": json.dumps({"error": f"{type(e).__name__}: {e}"})}],
                 "isError": True,
             }
+        # Fire-and-forget deterministic STM trace for side-effect tools.
+        # Runs out-of-band so the MCP response is unaffected; hook itself
+        # is exception-safe.
+        asyncio.create_task(memory_hooks.post_tool_use(name, result))
         return {"content": [{"type": "text", "text": json.dumps(result, default=str)}]}
 
     return wrapped
