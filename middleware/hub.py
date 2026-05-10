@@ -153,6 +153,142 @@ async def recipe_cook_page(request: Request, recipe_id: int):
     )
 
 
+# ─── Cook-mode ingredient → step map (Haiku-resolved, cached per recipe) ─
+# The /cook page used to highlight ingredients with browser-side substring
+# matching, which broke on references like "the dough" / "the sauce" /
+# "remaining mixture". This endpoint asks Haiku once (with the full
+# ingredient list + all steps in context) to produce a step-index →
+# ingredient-indices map, persists it on the recipes row, and returns
+# the cached value on every subsequent call.
+@router.get("/api/recipes/{recipe_id}/cook_map")
+async def recipe_cook_map(recipe_id: int):
+    import json as _json
+    from fastapi.responses import JSONResponse
+
+    # Defensive idempotent migration — keeps this feature working even
+    # if middleware/sql/recipe_step_ingredient_map.sql hasn't been applied
+    # by hand yet. ADD COLUMN IF NOT EXISTS is a no-op once the column is
+    # present, so this is cheap to run on every call.
+    def _ensure_column_sync() -> None:
+        try:
+            with psycopg2.connect(**PG_DSN) as conn, conn.cursor() as cur:
+                cur.execute(
+                    "ALTER TABLE recipes "
+                    "ADD COLUMN IF NOT EXISTS step_ingredient_map JSONB DEFAULT NULL"
+                )
+                conn.commit()
+        except Exception as e:
+            logger.warning(f"cook_map: ensure column failed: {e}")
+
+    await asyncio.to_thread(_ensure_column_sync)
+
+    recipe = await asyncio.to_thread(
+        _query_one,
+        "SELECT id, ingredients, steps, step_ingredient_map "
+        "FROM recipes WHERE id = %s",
+        (recipe_id,),
+    )
+    if not recipe:
+        return JSONResponse({"error": "not found"}, status_code=404)
+
+    # Cache hit — psycopg2 already decodes JSONB to a Python object, but
+    # tolerate the str case in case some row was inserted as TEXT.
+    cached = recipe.get("step_ingredient_map")
+    if cached is not None:
+        if isinstance(cached, str):
+            try:
+                cached = _json.loads(cached)
+            except Exception:
+                cached = {}
+        return JSONResponse(cached)
+
+    # Build human-readable ingredient + step lists from the JSONB columns.
+    raw_ings = recipe.get("ingredients") or []
+    if isinstance(raw_ings, str):
+        try:
+            raw_ings = _json.loads(raw_ings)
+        except Exception:
+            raw_ings = []
+    ingredients: list[str] = []
+    for ing in raw_ings:
+        if isinstance(ing, dict):
+            ingredients.append(
+                str(ing.get("text") or ing.get("name") or "").strip()
+            )
+        else:
+            ingredients.append(str(ing or "").strip())
+    ingredients = [i for i in ingredients if i]
+
+    raw_steps = recipe.get("steps") or []
+    if isinstance(raw_steps, str):
+        # Could be JSON or newline-separated. Try JSON first.
+        try:
+            parsed = _json.loads(raw_steps)
+            raw_steps = parsed if isinstance(parsed, list) else [
+                s for s in raw_steps.splitlines() if s.strip()
+            ]
+        except Exception:
+            raw_steps = [s for s in raw_steps.splitlines() if s.strip()]
+    steps: list[str] = [str(s or "").strip() for s in raw_steps if str(s or "").strip()]
+
+    def _persist_sync(payload: dict) -> None:
+        with psycopg2.connect(**PG_DSN) as conn, conn.cursor() as cur:
+            cur.execute(
+                "UPDATE recipes SET step_ingredient_map = %s::jsonb WHERE id = %s",
+                (_json.dumps(payload), recipe_id),
+            )
+            conn.commit()
+
+    if not ingredients or not steps:
+        await asyncio.to_thread(_persist_sync, {})
+        return JSONResponse({})
+
+    system_prompt = (
+        "You are a cooking assistant. Given a recipe's ingredient list "
+        "and step-by-step directions, return a JSON object mapping each "
+        "step index (0-based integer key as a string) to an array of "
+        "ingredient indices (0-based integers) that are actively used in "
+        "that step. Resolve references like 'the dough', 'the sauce', "
+        "'remaining mixture' back to the original ingredients. Return "
+        "ONLY the JSON object, no explanation, no markdown."
+    )
+    user_prompt = (
+        "Ingredients (0-based index):\n"
+        + "\n".join(f"{i}: {ing}" for i, ing in enumerate(ingredients))
+        + "\n\nSteps (0-based index):\n"
+        + "\n".join(f"{i}: {step}" for i, step in enumerate(steps))
+    )
+
+    parsed_map: dict = {}
+    try:
+        from oauth_oneshot import ask as oauth_ask
+        text = await oauth_ask(
+            user_prompt, system_prompt, model="haiku", timeout_s=60
+        )
+        if text:
+            # Strip optional markdown fence — same trick recipes.py uses.
+            t = text.strip()
+            if t.startswith("```"):
+                t = t.split("\n", 1)[1] if "\n" in t else t
+                if t.endswith("```"):
+                    t = t.rsplit("```", 1)[0]
+                t = t.strip()
+            try:
+                parsed = _json.loads(t)
+                if isinstance(parsed, dict):
+                    parsed_map = parsed
+            except Exception as e:
+                logger.warning(
+                    f"cook_map: haiku response wasn't parseable JSON: "
+                    f"{e}; first 200 chars: {text[:200]!r}"
+                )
+    except Exception as e:
+        logger.warning(f"cook_map: haiku call failed: {type(e).__name__}: {e}")
+
+    await asyncio.to_thread(_persist_sync, parsed_map)
+    return JSONResponse(parsed_map)
+
+
 # ─── Weekly menu ─────────────────────────────────────────────────────────
 @router.get("/weekly", response_class=HTMLResponse)
 async def weekly_page(request: Request):
