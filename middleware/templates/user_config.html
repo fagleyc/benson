@@ -104,13 +104,21 @@
             <div class="d-flex align-items-center gap-2 flex-wrap">
               <h4 class="text-warning mb-0">{{ u.name }}</h4>
               <span class="badge uc-role-{{ u.role or 'guest' }}">{{ u.role or 'guest' }}</span>
+              {% if u.unenrolled %}
+                <span class="badge bg-secondary" title="memory file present, voice not yet enrolled">voice not enrolled</span>
+              {% endif %}
               <span class="speaking-pulse" id="ucPulse-{{ u.name }}" style="display:none" title="speaking now"></span>
             </div>
             <div class="uc-stat text-secondary mt-1" id="ucStats-{{ u.name }}">
-              <span data-bind="samples">{{ u.sample_count }}</span> samples
-              {% if u.enrolled_at %} · enrolled {{ u.enrolled_at[:10] }}{% endif %}
-              {% if u.last_updated_at %} · updated <span data-bind="updated">{{ u.last_updated_at[:10] }}</span>{% endif %}
-              · voiceprint <span data-bind="vpsize">…</span>
+              {% if u.unenrolled %}
+                memory file only · no voiceprint yet
+                {% if u.last_updated_at %} · md updated <span data-bind="updated">{{ u.last_updated_at[:10] }}</span>{% endif %}
+              {% else %}
+                <span data-bind="samples">{{ u.sample_count }}</span> samples
+                {% if u.enrolled_at %} · enrolled {{ u.enrolled_at[:10] }}{% endif %}
+                {% if u.last_updated_at %} · updated <span data-bind="updated">{{ u.last_updated_at[:10] }}</span>{% endif %}
+                · voiceprint <span data-bind="vpsize">…</span>
+              {% endif %}
             </div>
           </div>
         </div>
@@ -128,9 +136,9 @@
             <div data-bind="samples-list" class="mb-2">
               <div class="text-secondary small fst-italic">loading…</div>
             </div>
-            <button class="btn btn-sm btn-outline-warning"
+            <button class="btn btn-sm btn-{{ 'warning' if u.unenrolled else 'outline-warning' }}"
                     onclick="startWizard({name:'{{ u.name }}', role:'{{ u.role or 'guest' }}', reenroll:true, mode:'voice'})">
-              Add more voice samples
+              {% if u.unenrolled %}+ Enroll voice samples{% else %}Add more voice samples{% endif %}
             </button>
           </div>
         </div>

@@ -91,6 +91,46 @@ def _now_iso() -> str:
 
 RESERVED_SLUGS = {"household", "index", "digests", "raw", "voiceprints"}
 
+# Roles for known family members — used as defaults when a member exists
+# only as a memory .md file (not yet voice-enrolled). Casey can override
+# any of these during the enrollment wizard.
+KNOWN_ROLES = {
+    "casey": "parent",
+    "lindsey": "parent",
+    "cole": "teen",
+    "zander": "child",
+}
+
+
+def list_household_members() -> list[dict]:
+    """Union of /opt/benson/memory/<name>.md files + voiceprints.
+
+    The Family page shows everyone Benson knows about — both
+    voice-enrolled members and pre-existing memory-file members. For
+    the unenrolled, role is inferred from KNOWN_ROLES and sample_count
+    is 0. Voiceprint metadata wins where both exist.
+    """
+    members = {m["name"]: dict(m, unenrolled=False) for m in vp.list_enrolled()}
+    for md_path in sorted(MEMORY_DIR.glob("*.md")):
+        slug = md_path.stem.lower()
+        if slug in RESERVED_SLUGS or slug in members:
+            continue
+        try:
+            mtime = datetime.fromtimestamp(md_path.stat().st_mtime, tz=timezone.utc)
+            updated_iso = mtime.isoformat(timespec="seconds")
+        except OSError:
+            updated_iso = None
+        members[slug] = {
+            "name": slug,
+            "role": KNOWN_ROLES.get(slug),
+            "photo": None,
+            "sample_count": 0,
+            "enrolled_at": None,
+            "last_updated_at": updated_iso,
+            "unenrolled": True,
+        }
+    return sorted(members.values(), key=lambda m: m["name"])
+
 
 def _slugify(raw: str) -> str:
     s = (raw or "").strip().lower()
@@ -126,7 +166,7 @@ def _save_state(enrollment_id: str, state: dict) -> None:
 # ─── Page ────────────────────────────────────────────────────────────────
 @router.get("", response_class=HTMLResponse)
 async def user_config_page(request: Request):
-    enrolled = await asyncio.to_thread(vp.list_enrolled)
+    enrolled = await asyncio.to_thread(list_household_members)
     ctx = {
         "active": "advanced",
         "now": datetime.now().strftime("%Y-%m-%d %H:%M"),
@@ -142,7 +182,7 @@ async def user_config_page(request: Request):
 # ─── Status (JSON for dashboards) ────────────────────────────────────────
 @router.get("/status")
 async def user_config_status() -> dict[str, Any]:
-    return {"enrolled": await asyncio.to_thread(vp.list_enrolled)}
+    return {"enrolled": await asyncio.to_thread(list_household_members)}
 
 
 # ─── Existing details (for the modify flow) ──────────────────────────────
@@ -151,9 +191,21 @@ async def user_details(name: str) -> dict[str, Any]:
     slug = _slugify(name)
     _check_reserved(slug)
     meta = vp.load_meta(slug)
-    if not meta:
-        raise HTTPException(404, f"{slug} is not enrolled")
     md_path = MEMORY_DIR / f"{slug}.md"
+    if not meta and not md_path.exists():
+        raise HTTPException(404, f"{slug} is not a household member")
+    unenrolled = not meta
+    if unenrolled:
+        meta = {
+            "name": slug,
+            "display_name": slug,
+            "role": KNOWN_ROLES.get(slug),
+            "photo": None,
+            "sample_count": 0,
+            "enrolled_at": None,
+            "last_updated_at": None,
+            "interview": {},
+        }
     md_size = md_path.stat().st_size if md_path.exists() else 0
     emb_path = vp._emb_path(slug)
     voiceprint_size = emb_path.stat().st_size if emb_path.exists() else 0
@@ -175,6 +227,7 @@ async def user_details(name: str) -> dict[str, Any]:
         "memory_preview": memory_preview,
         "voiceprint_size": voiceprint_size,
         "samples": samples,
+        "unenrolled": unenrolled,
     }
 
 
@@ -259,9 +312,24 @@ async def edit_interview_answer(
     answer = answer.strip()
     if not answer:
         raise HTTPException(400, "answer cannot be empty")
+    md_path = MEMORY_DIR / f"{slug}.md"
     meta = vp.load_meta(slug)
     if not meta:
-        raise HTTPException(404, f"{slug} is not enrolled")
+        if not md_path.exists():
+            raise HTTPException(404, f"{slug} is not a household member")
+        # Unenrolled member — create minimal metadata so the inline edit
+        # has somewhere to land; voice enrollment can happen later.
+        meta = {
+            "name": slug,
+            "display_name": slug,
+            "role": KNOWN_ROLES.get(slug),
+            "photo": None,
+            "sample_count": 0,
+            "samples": [],
+            "enrolled_at": None,
+            "last_updated_at": None,
+            "interview": {},
+        }
 
     interview = dict(meta.get("interview") or {})
     interview[q_key] = answer
@@ -270,7 +338,6 @@ async def edit_interview_answer(
     vp.write_meta(slug, meta)
 
     q_text = next(q["q"] for q in INTERVIEW_QUESTIONS if q["key"] == q_key)
-    md_path = MEMORY_DIR / f"{slug}.md"
     today = date.today().isoformat()
     section_lines = [
         f"## Inline edit {today}",
