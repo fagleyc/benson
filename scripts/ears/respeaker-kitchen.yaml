@@ -20,15 +20,27 @@ api:
 
 # Custom "Hey Benson" wake-word model, served by Benson via Caddy over
 # HTTPS (Caddy terminates TLS with its internal CA on 192.168.0.240:443
-# and reverse-proxies to the middleware on :8100). The compile machine
-# may need to trust Caddy's root CA — install via
-# https://192.168.0.240/caddy-root.crt if Python complains at compile time.
+# and reverse-proxies to the middleware on :8100). If the compile
+# machine doesn't trust Caddy's root CA, install it from
+# https://192.168.0.240/caddy-root.crt before flashing.
 #
-# `models: !extend` ADDS to formatBCE's base list (okay_nabu, kenobi,
-# hey_jarvis, hey_mycroft, stop) so they all coexist; HA's Assist
-# pipeline picks which one the satellite actively listens for via
-# `select.respeaker_kitchen_wake_word`.
-micro_wake_word:
-  models: !extend
+# `!extend` MUST go on the block key (`micro_wake_word: !extend`), not
+# the nested `models:` list. ESPHome's !extend does a shallow merge of
+# block keys, so the `models:` list is REPLACED, not appended. We
+# re-list the base pretrained models (okay_nabu, hey_jarvis, hey_mycroft,
+# stop) here so the sensitivity selector in the base YAML still finds
+# them by id. `kenobi` is dropped (formatBCE-specific, niche).
+# microphone / vad / on_wake_word_detected inherit from the base.
+micro_wake_word: !extend
+  models:
+    - model: https://github.com/kahrendt/microWakeWord/releases/download/okay_nabu_20241226.3/okay_nabu.json
+      id: okay_nabu
+    - model: hey_jarvis
+      id: hey_jarvis
+    - model: hey_mycroft
+      id: hey_mycroft
+    - model: https://github.com/kahrendt/microWakeWord/releases/download/stop/stop.json
+      id: stop
+      internal: true
     - model: https://192.168.0.240/microwakeword/hey_benson.json
       id: hey_benson
