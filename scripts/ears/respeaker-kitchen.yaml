@@ -20,77 +20,18 @@ api:
 
 # Custom "Hey Benson" wake-word model.
 #
-# Background: ESPHome's `!extend` tag turns out NOT to work cleanly for
-# nested singleton components imported via the `packages:` shorthand
-# (the YAML constructor isn't installed at this position and the
-# validator sees a raw tagged node). The only path that compiles is to
-# REDECLARE the full `micro_wake_word:` block here. That overrides the
-# base's block — so if formatBCE updates `on_wake_word_detected` upstream
-# we'd need to re-sync this section. Everything else in the base
-# (microphone definitions, sensitivity selector, voice_assistant glue)
-# is unaffected — it just looks up the model ids we declare below.
+# ESPHome fetches the .json manifest at COMPILE TIME (and the .tflite it
+# references) and bakes the bytes into the firmware image. So the URL
+# below must be reachable from the build machine AND Python's `requests`
+# library must trust the TLS chain. Plain http:// is rejected by the
+# validator; HTTPS with a self-signed cert fails on the Python side
+# unless the CA is installed into certifi's bundle. Public GitHub raw
+# URLs avoid both problems.
 #
-# The hey_benson model is served by Caddy over HTTPS on 192.168.0.240
-# (Caddy uses its internal CA → install the cert at
-# https://192.168.0.240/caddy-root.crt if compile complains).
+# `models: !extend` APPENDS this entry to formatBCE's base list
+# (okay_nabu, kenobi, hey_jarvis, hey_mycroft, stop) — block-level keys
+# inherit, ONLY the new model is added.
 micro_wake_word:
-  id: mww
-  microphone:
-    microphone: i2s_mics
-    channels: 1
-    gain_factor: 4
-  stop_after_detection: false
-  models:
-    - model: https://github.com/kahrendt/microWakeWord/releases/download/okay_nabu_20241226.3/okay_nabu.json
-      id: okay_nabu
-    - model: hey_jarvis
-      id: hey_jarvis
-    - model: hey_mycroft
-      id: hey_mycroft
-    - model: https://github.com/kahrendt/microWakeWord/releases/download/stop/stop.json
-      id: stop
-      internal: true
-    - model: https://192.168.0.240/microwakeword/hey_benson.json
+  models: !extend
+    - model: https://raw.githubusercontent.com/fagleyc/benson/main/microwakeword/models/hey_benson.json
       id: hey_benson
-  vad:
-    probability_cutoff: 0.05
-  on_wake_word_detected:
-    - if:
-        condition:
-          switch.is_off: mic_mute_switch
-        then:
-          - script.execute:
-              id: send_wake_word_event
-              wake_word: !lambda return wake_word;
-          - if:
-              condition:
-                switch.is_on: timer_ringing
-              then:
-                - switch.turn_off: timer_ringing
-              else:
-                - if:
-                    condition:
-                      voice_assistant.is_running:
-                    then:
-                      voice_assistant.stop:
-                    else:
-                      - if:
-                          condition:
-                            media_player.is_announcing:
-                              id: external_media_player
-                          then:
-                            - media_player.stop:
-                                announcement: true
-                                id: external_media_player
-                          else:
-                            - if:
-                                condition:
-                                  switch.is_on: wake_sound
-                                then:
-                                  - script.execute:
-                                      id: play_sound
-                                      priority: true
-                                      sound_file: "wake_word_triggered_sound"
-                                  - delay: 300ms
-                            - voice_assistant.start:
-                                wake_word: !lambda return wake_word;
