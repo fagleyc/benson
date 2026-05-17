@@ -1,69 +1,201 @@
 {% extends "layout.html" %}
 {% block title %}Family — Fagley House Hub{% endblock %}
 {% block content %}
+<style>
+  .uc-avatar {
+    width: 96px; height: 96px; border-radius: 50%;
+    object-fit: cover; border: 1px solid #555; background: #2a3742;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 2.4rem; color: #f39c12; flex-shrink: 0;
+  }
+  .uc-card { transition: border-color .15s; }
+  .uc-card.speaking { border-color: #7fdb9b !important; box-shadow: 0 0 0 1px #7fdb9b inset; }
+  .uc-role-parent { background: #4a3a1a; color: #f7c873; }
+  .uc-role-teen   { background: #1f3a4a; color: #7fc3e0; }
+  .uc-role-child  { background: #2a4a2a; color: #9ddb9b; }
+  .uc-role-guest  { background: #3a3a3a; color: #c0c0c0; }
+  .uc-stat { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .8rem; }
+  .uc-section-header {
+    cursor: pointer; user-select: none;
+    padding: .35rem .5rem; border-radius: 4px;
+    display: flex; justify-content: space-between; align-items: center;
+    background: #1a2128; border: 1px solid #2d3a47;
+  }
+  .uc-section-header:hover { background: #1f2730; }
+  .uc-section-header .uc-caret { transition: transform .15s; }
+  .uc-section-header.collapsed .uc-caret { transform: rotate(-90deg); }
+  .uc-section-body { padding: .5rem .25rem 0 .25rem; }
+  .uc-q-label { color: #aab; font-size: .82rem; margin-bottom: .15rem; }
+  .uc-q-answer {
+    white-space: pre-wrap; padding: .3rem .55rem;
+    background: #11171c; border: 1px solid #232f3a; border-radius: 4px;
+    font-size: .92rem; min-height: 1.8rem;
+  }
+  .uc-q-answer.empty { color: #555; font-style: italic; }
+  .uc-q-row { margin-bottom: .55rem; }
+  .uc-edit-link {
+    font-size: .78rem; color: #f39c12; cursor: pointer; margin-left: .5rem;
+  }
+  .uc-edit-link:hover { text-decoration: underline; }
+  .uc-flash { color: #7fdb9b; font-size: .78rem; margin-left: .5rem; opacity: 0; transition: opacity .25s; }
+  .uc-flash.show { opacity: 1; }
+  .uc-sample-row {
+    display: flex; gap: .5rem; align-items: center;
+    padding: .25rem 0; border-bottom: 1px solid #1f2730; font-size: .82rem;
+  }
+  .uc-sample-row:last-child { border-bottom: none; }
+  .uc-sample-meta { color: #888; font-family: ui-monospace, monospace; min-width: 12rem; }
+  .uc-sample-row audio { height: 28px; }
+  .uc-mem-pre {
+    white-space: pre-wrap; background: #11171c; border: 1px solid #232f3a;
+    border-radius: 4px; padding: .5rem; font-size: .8rem; color: #ccd;
+    max-height: 220px; overflow-y: auto; margin: 0;
+  }
+  .uc-empty-state {
+    border: 1px dashed #444; border-radius: 8px; padding: 2.5rem;
+    text-align: center; color: #888;
+  }
+  .speaking-pulse {
+    display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+    background: #7fdb9b; margin-left: .4rem; vertical-align: middle;
+    animation: ucPulse 1.2s ease-in-out infinite;
+  }
+  @keyframes ucPulse {
+    0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(127, 219, 155, 0.6); }
+    50% { opacity: .55; box-shadow: 0 0 0 6px rgba(127, 219, 155, 0); }
+  }
+  .uc-header-stat { font-size: .82rem; color: #889; }
+</style>
+
 <a href="/advanced" class="text-secondary">← Advanced</a>
-<h2 class="mt-3 mb-1">Family</h2>
-<p class="text-secondary small mb-3">
-  Enrolled household members. Each card links to a voiceprint Benson uses
-  to recognize who's talking, plus an interview that seeds the person's
-  memory file. Re-enrollment appends — it never overwrites.
-</p>
+<div class="d-flex justify-content-between align-items-end flex-wrap gap-2 mt-3 mb-3">
+  <div>
+    <h2 class="mb-1">Family</h2>
+    <div class="uc-header-stat">
+      <span id="ucCountLine">{{ enrolled|length }} member{{ '' if enrolled|length == 1 else 's' }} enrolled</span>
+      <span class="text-secondary"> · </span>
+      <span>last identified: <span id="ucLastSpeaker" class="text-warning">—</span> <span id="ucLastAge" class="text-secondary"></span></span>
+    </div>
+  </div>
+  <button class="btn btn-warning" onclick="startWizard()">+ Add Family Member</button>
+</div>
+
+{% if not enrolled %}
+<div class="uc-empty-state mb-4">
+  <h5 class="text-secondary">No household members enrolled yet</h5>
+  <p class="small mb-3">Add yourself or a family member to start training Benson on voices.</p>
+  <button class="btn btn-warning" onclick="startWizard()">+ Add Family Member</button>
+</div>
+{% endif %}
 
 <div class="row g-3 mb-4" id="enrolledGrid">
   {% for u in enrolled %}
-  <div class="col-12 col-md-6 col-lg-4">
-    <div class="card bg-dark border-secondary h-100">
-      <div class="card-body d-flex gap-3 align-items-start">
-        {% if u.photo %}
-          <img src="{{ u.photo }}" alt="" style="width:64px;height:64px;border-radius:50%;object-fit:cover;border:1px solid #555">
-        {% else %}
-          <div style="width:64px;height:64px;border-radius:50%;background:#2a3742;display:flex;align-items:center;justify-content:center;font-size:1.6rem;color:#f39c12">
-            {{ (u.name or '?')[0]|upper }}
-          </div>
-        {% endif %}
-        <div class="flex-grow-1">
-          <h5 class="card-title text-warning mb-1">{{ u.name }}</h5>
-          <div class="small text-secondary">
-            {{ u.role or 'unknown role' }} · {{ u.sample_count }} sample{{ '' if u.sample_count == 1 else 's' }}
-          </div>
-          {% if u.last_updated_at %}
-            <div class="small text-secondary">updated {{ u.last_updated_at[:10] }}</div>
+  <div class="col-12 col-lg-6">
+    <div class="card bg-dark border-secondary uc-card h-100" data-name="{{ u.name }}" id="ucCard-{{ u.name }}">
+      <div class="card-body">
+        <!-- Header row -->
+        <div class="d-flex gap-3 align-items-center mb-2">
+          {% if u.photo %}
+            <img src="{{ u.photo }}" alt="" class="uc-avatar" style="padding:0">
+          {% else %}
+            <div class="uc-avatar">{{ (u.name or '?')[0]|upper }}</div>
           {% endif %}
-          <div class="mt-2 d-flex gap-2 flex-wrap">
+          <div class="flex-grow-1">
+            <div class="d-flex align-items-center gap-2 flex-wrap">
+              <h4 class="text-warning mb-0">{{ u.name }}</h4>
+              <span class="badge uc-role-{{ u.role or 'guest' }}">{{ u.role or 'guest' }}</span>
+              <span class="speaking-pulse" id="ucPulse-{{ u.name }}" style="display:none" title="speaking now"></span>
+            </div>
+            <div class="uc-stat text-secondary mt-1" id="ucStats-{{ u.name }}">
+              <span data-bind="samples">{{ u.sample_count }}</span> samples
+              {% if u.enrolled_at %} · enrolled {{ u.enrolled_at[:10] }}{% endif %}
+              {% if u.last_updated_at %} · updated <span data-bind="updated">{{ u.last_updated_at[:10] }}</span>{% endif %}
+              · voiceprint <span data-bind="vpsize">…</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Voice samples -->
+        <div class="mb-2">
+          <div class="uc-section-header collapsed" onclick="ucToggle(this)" data-target="ucVoice-{{ u.name }}">
+            <strong class="small">Voice samples</strong>
+            <span class="small text-secondary">
+              <span data-bind="samples">{{ u.sample_count }}</span>
+              <span class="uc-caret ms-2">▾</span>
+            </span>
+          </div>
+          <div class="uc-section-body" id="ucVoice-{{ u.name }}" style="display:none">
+            <div data-bind="samples-list" class="mb-2">
+              <div class="text-secondary small fst-italic">loading…</div>
+            </div>
             <button class="btn btn-sm btn-outline-warning"
-                    onclick="startWizard({name: '{{ u.name }}', role: '{{ u.role or 'guest' }}', reenroll: true, mode: 'voice'})"
-                    title="Add new voice samples — averages into existing voiceprint">
-              + Voice samples
-            </button>
-            <button class="btn btn-sm btn-outline-warning"
-                    onclick="startWizard({name: '{{ u.name }}', role: '{{ u.role or 'guest' }}', reenroll: true, mode: 'interview'})"
-                    title="Update interview — appends a new dated section to {{ u.name }}.md">
-              Update interview
-            </button>
-            <button class="btn btn-sm btn-outline-danger"
-                    onclick="deleteUser('{{ u.name }}')">
-              Delete
+                    onclick="startWizard({name:'{{ u.name }}', role:'{{ u.role or 'guest' }}', reenroll:true, mode:'voice'})">
+              Add more voice samples
             </button>
           </div>
+        </div>
+
+        <!-- Interview (default expanded) -->
+        <div class="mb-2">
+          <div class="uc-section-header" onclick="ucToggle(this)" data-target="ucIntv-{{ u.name }}">
+            <strong class="small">Interview</strong>
+            <span class="small text-secondary">
+              <span data-bind="answered">…</span> / {{ questions|length }} answered
+              <span class="uc-caret ms-2">▾</span>
+            </span>
+          </div>
+          <div class="uc-section-body" id="ucIntv-{{ u.name }}">
+            {% for q in questions %}
+              <div class="uc-q-row" data-name="{{ u.name }}" data-key="{{ q.key }}">
+                <div class="uc-q-label">{{ q.q }}
+                  <span class="uc-edit-link" onclick="ucEditStart(this)">Edit</span>
+                  <span class="uc-flash">saved</span>
+                </div>
+                <div class="uc-q-answer empty">—</div>
+              </div>
+            {% endfor %}
+          </div>
+        </div>
+
+        <!-- Memory file -->
+        <div class="mb-2">
+          <div class="uc-section-header collapsed" onclick="ucToggle(this)" data-target="ucMem-{{ u.name }}">
+            <strong class="small">Memory file</strong>
+            <span class="small text-secondary">
+              <code data-bind="memory_path">{{ u.name }}.md</code>
+              <span class="uc-caret ms-2">▾</span>
+            </span>
+          </div>
+          <div class="uc-section-body" id="ucMem-{{ u.name }}" style="display:none">
+            <pre class="uc-mem-pre" data-bind="memory_preview">loading…</pre>
+            <div class="small text-secondary mt-1">
+              View full file: <code data-bind="memory_path">/opt/benson/memory/{{ u.name }}.md</code>
+              (SSH to read; not exposed over LAN)
+            </div>
+          </div>
+        </div>
+
+        <!-- Action row -->
+        <div class="d-flex gap-2 mt-3 pt-2 border-top border-secondary">
+          <button class="btn btn-sm btn-outline-warning"
+                  onclick="startWizard({name:'{{ u.name }}', role:'{{ u.role or 'guest' }}', reenroll:true, mode:'voice'})">
+            Add voice samples
+          </button>
+          <div class="flex-grow-1"></div>
+          <button class="btn btn-sm btn-outline-danger" onclick="deleteUser('{{ u.name }}')">
+            Delete
+          </button>
         </div>
       </div>
     </div>
   </div>
   {% endfor %}
-
-  <div class="col-12 col-md-6 col-lg-4">
-    <div class="card bg-dark border-secondary h-100 recipe-card">
-      <div class="card-body d-flex flex-column align-items-center justify-content-center" style="min-height:160px">
-        <button class="btn btn-warning btn-lg" onclick="startWizard()">+ Add User</button>
-      </div>
-    </div>
-  </div>
 </div>
 
 <!-- ─── Wizard ──────────────────────────────────────────────────────── -->
 <div id="wizard" class="card bg-dark border-warning p-3 mb-4" style="display:none">
   <div class="d-flex justify-content-between align-items-baseline mb-2">
-    <h4 class="mb-0 text-warning">Enrollment</h4>
+    <h4 class="mb-0 text-warning" id="wizardTitle">Enrollment</h4>
     <button class="btn btn-sm btn-outline-secondary" onclick="cancelWizard()">Close</button>
   </div>
 
@@ -129,7 +261,7 @@
     {% endfor %}
     <div id="step2Err" class="small text-danger mb-2"></div>
     <div class="d-flex gap-2">
-      <button class="btn btn-outline-secondary" onclick="showStep(1)">← Back</button>
+      <button id="step2BackBtn" class="btn btn-outline-secondary" onclick="showStep(1)">← Back</button>
       <button class="btn btn-warning" onclick="step2Next()">Next →</button>
     </div>
   </div>
@@ -160,6 +292,191 @@
 </div>
 
 <script>
+const UC_QUESTIONS = {{ questions|tojson }};
+
+function ucToggle(headerEl) {
+  const targetId = headerEl.dataset.target;
+  const body = document.getElementById(targetId);
+  if (!body) return;
+  const willShow = body.style.display === 'none';
+  body.style.display = willShow ? '' : 'none';
+  headerEl.classList.toggle('collapsed', !willShow);
+}
+
+function ucFormatBytes(n) {
+  if (!n || n < 0) return '—';
+  if (n < 1024) return n + 'B';
+  if (n < 1024 * 1024) return (n / 1024).toFixed(1) + 'KB';
+  return (n / 1024 / 1024).toFixed(1) + 'MB';
+}
+
+function ucEsc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, c =>
+    ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+function ucBind(card, selector, fn) {
+  card.querySelectorAll('[data-bind="' + selector + '"]').forEach(fn);
+}
+
+async function ucHydrateCard(name) {
+  const card = document.getElementById('ucCard-' + name);
+  if (!card) return;
+  try {
+    const r = await fetch('/advanced/user-config/' + name + '/details');
+    if (!r.ok) throw new Error('details ' + r.status);
+    const d = await r.json();
+    ucBind(card, 'vpsize', el => el.textContent = ucFormatBytes(d.voiceprint_size));
+    ucBind(card, 'samples', el => el.textContent = (d.samples || []).length || d.sample_count || 0);
+    ucBind(card, 'updated', el => el.textContent = (d.last_updated_at || '').slice(0,10) || '—');
+    ucBind(card, 'memory_preview', el => el.textContent = d.memory_preview || '(empty)');
+    ucBind(card, 'memory_path', el => el.textContent = d.memory_path || '');
+
+    // Samples list
+    const listEl = card.querySelector('[data-bind="samples-list"]');
+    if (listEl) {
+      const rows = d.samples || [];
+      if (rows.length === 0) {
+        listEl.innerHTML = '<div class="text-secondary small fst-italic">No raw samples found.</div>';
+      } else {
+        listEl.innerHTML = rows.map(s => (
+          '<div class="uc-sample-row">' +
+            '<span class="uc-sample-meta">' +
+              ucEsc(s.filename) + ' · ' + (s.duration_s || 0).toFixed(1) + 's · ' +
+              ucEsc((s.recorded_at || '').slice(0,16).replace('T',' ')) +
+            '</span>' +
+            '<audio controls preload="none" src="' + s.audio_url + '"></audio>' +
+          '</div>'
+        )).join('');
+      }
+    }
+
+    // Interview answers
+    const interview = d.interview || {};
+    let answered = 0;
+    card.querySelectorAll('.uc-q-row').forEach(row => {
+      const key = row.dataset.key;
+      const a = interview[key] || '';
+      const ans = row.querySelector('.uc-q-answer');
+      if (a) {
+        answered++;
+        ans.textContent = a;
+        ans.classList.remove('empty');
+      } else {
+        ans.textContent = '—';
+        ans.classList.add('empty');
+      }
+    });
+    ucBind(card, 'answered', el => el.textContent = answered);
+  } catch (e) {
+    console.warn('hydrate ' + name + ' failed:', e);
+  }
+}
+
+function ucEditStart(linkEl) {
+  const row = linkEl.closest('.uc-q-row');
+  if (!row || row.querySelector('textarea')) return;
+  const name = row.dataset.name;
+  const key = row.dataset.key;
+  const ans = row.querySelector('.uc-q-answer');
+  const current = ans.classList.contains('empty') ? '' : ans.textContent;
+  const editor = document.createElement('div');
+  editor.innerHTML =
+    '<textarea class="form-control form-control-sm bg-dark text-light border-secondary" rows="3">' +
+      ucEsc(current) +
+    '</textarea>' +
+    '<div class="d-flex gap-2 mt-1">' +
+      '<button class="btn btn-sm btn-success uc-save-btn">Save</button>' +
+      '<button class="btn btn-sm btn-outline-secondary uc-cancel-btn">Cancel</button>' +
+      '<span class="small text-danger uc-edit-err"></span>' +
+    '</div>';
+  ans.style.display = 'none';
+  linkEl.style.display = 'none';
+  ans.after(editor);
+  const ta = editor.querySelector('textarea');
+  ta.focus();
+  ta.setSelectionRange(ta.value.length, ta.value.length);
+  editor.querySelector('.uc-cancel-btn').addEventListener('click', () => {
+    editor.remove();
+    ans.style.display = '';
+    linkEl.style.display = '';
+  });
+  editor.querySelector('.uc-save-btn').addEventListener('click', async () => {
+    const v = (ta.value || '').trim();
+    const errEl = editor.querySelector('.uc-edit-err');
+    errEl.textContent = '';
+    if (!v) { errEl.textContent = 'Answer cannot be empty.'; return; }
+    try {
+      const r = await fetch('/advanced/user-config/' + name + '/interview/' + key, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({answer: v}),
+      });
+      if (!r.ok) throw new Error(await r.text());
+      const j = await r.json();
+      ans.textContent = j.answer;
+      ans.classList.remove('empty');
+      editor.remove();
+      ans.style.display = '';
+      linkEl.style.display = '';
+      // Bump the updated badge + answered count in stats
+      const card = document.getElementById('ucCard-' + name);
+      if (card) {
+        ucBind(card, 'updated', el => el.textContent = (j.last_updated_at || '').slice(0,10));
+        let answered = 0;
+        card.querySelectorAll('.uc-q-row .uc-q-answer').forEach(a => {
+          if (!a.classList.contains('empty')) answered++;
+        });
+        ucBind(card, 'answered', el => el.textContent = answered);
+      }
+      const flash = row.querySelector('.uc-flash');
+      if (flash) {
+        flash.classList.add('show');
+        setTimeout(() => flash.classList.remove('show'), 1500);
+      }
+    } catch (e) {
+      errEl.textContent = 'Save failed: ' + e;
+    }
+  });
+}
+
+// ─── Recent speakers polling ─────────────────────────────────────────
+async function ucPollSpeakers() {
+  try {
+    const r = await fetch('/api/voice/latest-speaker');
+    if (!r.ok) return;
+    const j = await r.json();
+    const sp = j && j.speaker;
+    const age = j && j.age_s;
+    const lastSpeakerEl = document.getElementById('ucLastSpeaker');
+    const lastAgeEl = document.getElementById('ucLastAge');
+    if (sp && !j.stale) {
+      lastSpeakerEl.textContent = sp;
+      lastAgeEl.textContent = (age != null) ? '· ' + age.toFixed(0) + 's ago' : '';
+    } else {
+      lastSpeakerEl.textContent = '—';
+      lastAgeEl.textContent = '';
+    }
+    // Pulse on cards matching the latest speaker within 30s
+    document.querySelectorAll('[id^="ucCard-"]').forEach(card => {
+      const nm = card.dataset.name;
+      const pulse = document.getElementById('ucPulse-' + nm);
+      const isMatch = sp && !j.stale && (age != null) && age < 30 &&
+                      (sp.toLowerCase() === nm.toLowerCase());
+      if (pulse) pulse.style.display = isMatch ? '' : 'none';
+      card.classList.toggle('speaking', !!isMatch);
+    });
+  } catch(e) { /* silent */ }
+}
+
+// Hydrate every card on load, then poll for speakers.
+document.querySelectorAll('[id^="ucCard-"]').forEach(card => {
+  ucHydrateCard(card.dataset.name);
+});
+ucPollSpeakers();
+setInterval(ucPollSpeakers, 5000);
+
+// ─── Wizard ──────────────────────────────────────────────────────────
 let enrollState = null;
 let mediaStream = null;
 let mediaRecorder = null;
@@ -170,6 +487,7 @@ let recordingIdx = -1;
 let analyserNode = null;
 let vuRafHandle = null;
 let sampleCount = 0;
+let wizardMode = 'full';
 
 function showStep(n) {
   document.getElementById('step1').style.display = n === 1 ? '' : 'none';
@@ -181,17 +499,20 @@ function showStep(n) {
     el.classList.toggle('fw-bold', i === n - 1);
     el.classList.toggle('text-secondary', i !== n - 1);
   });
-  // Hide Step-3 Back button if we entered the wizard at step 3 directly.
   const backBtn = document.getElementById('step3BackBtn');
-  if (backBtn) backBtn.style.display = (n === 3 && wizardMode === 'interview') ? 'none' : '';
+  if (backBtn) backBtn.style.display = (n === 3 && wizardMode !== 'full') ? 'none' : '';
+  const step2BackBtn = document.getElementById('step2BackBtn');
+  if (step2BackBtn) step2BackBtn.style.display = (n === 2 && wizardMode === 'voice') ? 'none' : '';
 }
-
-let wizardMode = 'full';   // 'full' | 'voice' | 'interview'
 
 async function startWizard(opts) {
   enrollState = null;
   sampleCount = 0;
   wizardMode = (opts && opts.mode) || 'full';
+  document.getElementById('wizardTitle').textContent =
+    wizardMode === 'voice' ? 'Add voice samples'
+    : wizardMode === 'interview' ? 'Update interview'
+    : 'Add Family Member';
   document.getElementById('wizardResult').innerHTML = '';
   document.getElementById('step1Err').textContent = '';
   document.getElementById('step2Err').textContent = '';
@@ -212,8 +533,6 @@ async function startWizard(opts) {
     document.getElementById('fldName').value = opts.name;
     document.getElementById('fldName').disabled = true;
     document.getElementById('fldRole').value = opts.role || 'guest';
-    // Pre-populate interview placeholders from existing meta so the user
-    // can SEE what's already on file and decide what to update.
     try {
       const dr = await fetch('/advanced/user-config/' + opts.name + '/details');
       if (dr.ok) {
@@ -228,13 +547,12 @@ async function startWizard(opts) {
   } else {
     document.getElementById('fldName').value = '';
     document.getElementById('fldName').disabled = false;
-    document.getElementById('fldRole').value = 'guest';
+    document.getElementById('fldRole').value = 'parent';
   }
   document.getElementById('fldPhoto').value = '';
   document.getElementById('wizard').style.display = '';
   document.getElementById('wizard').scrollIntoView({behavior:'smooth', block:'start'});
 
-  // Mode-specific entry: jump past steps we don't need.
   if (opts && opts.name && wizardMode !== 'full') {
     try {
       const r = await fetch('/advanced/user-config/start', {
@@ -289,7 +607,6 @@ async function step1Next() {
     document.getElementById('step1Err').textContent = String(e);
     return;
   }
-  // Photo upload (optional, runs in parallel with stepping forward)
   const photoFile = document.getElementById('fldPhoto').files[0];
   if (photoFile) {
     try {
@@ -309,7 +626,6 @@ async function ensureMic() {
     throw new Error('mic API unavailable (needs HTTPS or localhost)');
   }
   mediaStream = await navigator.mediaDevices.getUserMedia({audio: true});
-  // Set up analyser for VU meter
   const ac = new (window.AudioContext || window.webkitAudioContext)();
   const src = ac.createMediaStreamSource(mediaStream);
   analyserNode = ac.createAnalyser();
@@ -447,10 +763,6 @@ async function uploadRecording(idx) {
 }
 
 function step2Next() {
-  // In "voice-only" mode we let the user finish from step 2 directly.
-  // In re-enroll modes the user may have skipped recording (e.g. they
-  // only opened the voice flow to view samples) — allow that too, but
-  // require at least one sample on a fresh enrollment.
   if (wizardMode === 'full' && sampleCount < 1) {
     document.getElementById('step2Err').textContent =
       'Record at least one valid sample before continuing (three is best).';
@@ -463,7 +775,6 @@ function step2Next() {
     analyserNode = null;
   }
   if (wizardMode === 'voice') {
-    // Voice-only re-enroll: skip interview and finish.
     finish();
     return;
   }

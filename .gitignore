@@ -56,3 +56,7 @@ Thumbs.db
 
 # Self-modification artifacts
 proposals/*.log
+
+# WiFi creds for the ReSpeaker flash — local only, never publish
+scripts/ears/secrets.yaml
+scripts/ears/secrets.yaml.stub

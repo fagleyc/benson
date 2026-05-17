@@ -27,10 +27,11 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 
 import voiceprint as vp
+import wyoming_whisper as ww
 
 logger = logging.getLogger("benson.user_config")
 
@@ -154,6 +155,11 @@ async def user_details(name: str) -> dict[str, Any]:
         raise HTTPException(404, f"{slug} is not enrolled")
     md_path = MEMORY_DIR / f"{slug}.md"
     md_size = md_path.stat().st_size if md_path.exists() else 0
+    emb_path = vp._emb_path(slug)
+    voiceprint_size = emb_path.stat().st_size if emb_path.exists() else 0
+    samples, memory_preview = await asyncio.to_thread(
+        _collect_samples_and_preview, slug, md_path
+    )
     return {
         "name": slug,
         "display_name": meta.get("display_name") or slug,
@@ -164,8 +170,166 @@ async def user_details(name: str) -> dict[str, Any]:
         "last_updated_at": meta.get("last_updated_at"),
         "interview": meta.get("interview") or {},
         "memory_file": str(md_path),
+        "memory_path": str(md_path),
         "memory_size": md_size,
+        "memory_preview": memory_preview,
+        "voiceprint_size": voiceprint_size,
+        "samples": samples,
     }
+
+
+def _collect_samples_and_preview(slug: str, md_path: Path) -> tuple[list[dict], str]:
+    raw_dir = vp.RAW_DIR / slug
+    samples: list[dict] = []
+    if raw_dir.is_dir():
+        wavs = sorted(
+            (p for p in raw_dir.glob("*.wav") if p.is_file()),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+        for idx, p in enumerate(wavs):
+            try:
+                dur = _probe_duration(p)
+            except Exception:
+                dur = 0.0
+            try:
+                mtime = datetime.fromtimestamp(p.stat().st_mtime, tz=timezone.utc)
+                recorded_at = mtime.isoformat(timespec="seconds")
+            except OSError:
+                recorded_at = None
+            samples.append({
+                "idx": idx,
+                "filename": p.name,
+                "duration_s": round(float(dur), 2),
+                "recorded_at": recorded_at,
+                "audio_url": f"/advanced/user-config/{slug}/sample/{idx}",
+            })
+    preview = ""
+    try:
+        if md_path.exists():
+            preview = md_path.read_text(errors="replace")[:400]
+    except OSError:
+        preview = ""
+    return samples, preview
+
+
+# ─── Raw sample download ─────────────────────────────────────────────────
+@router.get("/{name}/sample/{idx}")
+async def get_sample(name: str, idx: int):
+    slug = _slugify(name)
+    _check_reserved(slug)
+    if not vp.load_meta(slug):
+        raise HTTPException(404, f"{slug} is not enrolled")
+    raw_dir = vp.RAW_DIR / slug
+    if not raw_dir.is_dir():
+        raise HTTPException(404, "no raw samples")
+
+    def _pick() -> Path | None:
+        wavs = sorted(
+            (p for p in raw_dir.glob("*.wav") if p.is_file()),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+        if idx < 0 or idx >= len(wavs):
+            return None
+        return wavs[idx]
+
+    wav = await asyncio.to_thread(_pick)
+    if wav is None:
+        raise HTTPException(404, f"sample {idx} not found")
+    return FileResponse(
+        str(wav), media_type="audio/wav", filename=wav.name
+    )
+
+
+# ─── Inline edit of a single interview answer ────────────────────────────
+@router.post("/{name}/interview/{q_key}")
+async def edit_interview_answer(
+    name: str, q_key: str, request: Request
+) -> dict[str, Any]:
+    slug = _slugify(name)
+    _check_reserved(slug)
+    known_keys = {q["key"] for q in INTERVIEW_QUESTIONS}
+    if q_key not in known_keys:
+        raise HTTPException(400, f"unknown interview key '{q_key}'")
+    body = await request.json()
+    answer = (body or {}).get("answer")
+    if not isinstance(answer, str):
+        raise HTTPException(400, "answer must be a string")
+    answer = answer.strip()
+    if not answer:
+        raise HTTPException(400, "answer cannot be empty")
+    meta = vp.load_meta(slug)
+    if not meta:
+        raise HTTPException(404, f"{slug} is not enrolled")
+
+    interview = dict(meta.get("interview") or {})
+    interview[q_key] = answer
+    meta["interview"] = interview
+    meta["last_updated_at"] = _now_iso()
+    vp.write_meta(slug, meta)
+
+    q_text = next(q["q"] for q in INTERVIEW_QUESTIONS if q["key"] == q_key)
+    md_path = MEMORY_DIR / f"{slug}.md"
+    today = date.today().isoformat()
+    section_lines = [
+        f"## Inline edit {today}",
+        "",
+        f"- {q_text} — {answer}",
+        "",
+    ]
+    section = "\n".join(section_lines)
+
+    def _append_md() -> None:
+        if md_path.exists():
+            existing = md_path.read_text()
+            if not existing.endswith("\n"):
+                existing += "\n"
+            md_path.write_text(existing + "\n" + section)
+        else:
+            header = (
+                f"# {meta.get('display_name') or slug}\n\n"
+                f"Facts and context about {meta.get('display_name') or slug}, "
+                "accumulated from past conversations.\n\n"
+            )
+            md_path.write_text(header + section)
+
+    await asyncio.to_thread(_append_md)
+    return {
+        "ok": True,
+        "name": slug,
+        "key": q_key,
+        "answer": answer,
+        "last_updated_at": meta["last_updated_at"],
+        "memory_path": str(md_path),
+    }
+
+
+# ─── Recent speakers aggregator ──────────────────────────────────────────
+@router.get("/recent-speakers")
+async def recent_speakers() -> dict[str, Any]:
+    enrolled = await asyncio.to_thread(vp.list_enrolled)
+    out: dict[str, Any] = {}
+    # LATEST_BY_ROOM is keyed by room, not name — best we can do without
+    # synthesizing fake per-name cache state is to expose the overall
+    # latest and let the UI badge whoever matches.
+    overall = ww._lookup_speaker(None)
+    for u in enrolled:
+        nm = (u.get("name") or "").lower()
+        if not nm:
+            continue
+        if (
+            not overall.get("stale")
+            and (overall.get("speaker") or "").lower() == nm
+        ):
+            out[nm] = {
+                "speaker": overall.get("speaker"),
+                "age_s": overall.get("age_s"),
+                "confidence": overall.get("confidence"),
+            }
+        else:
+            out[nm] = {"speaker": None, "age_s": None, "confidence": 0.0}
+    return {"latest_overall": overall, "by_name": out}
 
 
 # ─── Start ───────────────────────────────────────────────────────────────
