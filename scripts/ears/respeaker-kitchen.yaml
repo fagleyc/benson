@@ -18,56 +18,14 @@ api:
   encryption:
     key: !secret api_encryption_key
 
-# ---------------------------------------------------------------------------
-# WAKE-WORD CUSTOMIZATION
-# ---------------------------------------------------------------------------
-# formatBCE's base YAML configures `micro_wake_word:` with five models
-# (okay_nabu, kenobi, hey_jarvis, hey_mycroft, stop). We want "Hey Benson".
-#
-# Option A — quickest (pretrained, no training required):
-#   Use `hey_jarvis` (already in the base config). It is the closest
-#   "household assistant" feel among the upstream pretrained models. Just
-#   tell HA's Assist pipeline to listen for "hey_jarvis" and skip the
-#   training entirely.
-#
-# Option B — custom "Hey Benson" model (locally trained or Colab):
-#   Drop a `hey_benson.tflite` + `hey_benson.json` pair somewhere
-#   web-reachable (GitHub raw / HA static / etc.), then uncomment the
-#   block below. ESPHome packages merge by key, and the upstream
-#   `micro_wake_word:` block has a `models:` list — to add to it without
-#   losing the base entries, use `!extend`.
-#
-# DO NOT uncomment until you have a hosted model URL and have flashed
-# this YAML successfully once on `hey_jarvis` first (so you can roll
-# back if the custom model misfires).
-#
-# micro_wake_word: !extend
-#   models:
-#     - model: https://raw.githubusercontent.com/<casey>/<benson-models>/main/hey_benson.json
-#       id: hey_benson
-#       # probability_cutoff: 0.97   # default in the manifest; lower if FRR is high
-#
-# A trained hey_benson.tflite + hey_benson.json pair is already sitting at
-# /opt/benson/microwakeword/models/ from tonight's training run. They are
-# committed in the benson repo but ESPHome needs an HTTPS URL — push the
-# Benson repo to GitHub (or another HTTPS server) and use the raw URL of
-# hey_benson.json. The manifest references hey_benson.tflite relative to
-# its own location, so keep them in the same directory.
-#
-# Notes:
-#   - The .json manifest must reference the .tflite by relative URL
-#     (same dir), schema like /opt/benson/microwakeword/models/hey_benson.json.
-#   - To DROP a pretrained model (e.g. remove okay_nabu so it can't
-#     trigger), there is no clean override via !extend — you would need
-#     to fork formatBCE's base YAML or set its `probability_cutoff` very
-#     high. Easiest: leave it enabled in ESPHome but disable it as a
-#     wake word in HA's Assist pipeline UI.
-#
-# UNKNOWN: I have not verified `!extend` semantics against formatBCE's
-# exact base-YAML key on a real flash. If `!extend` fails, the fallback
-# is to copy formatBCE's full `micro_wake_word:` block into this file
-# (removing the package's `respeaker-satellite-base.yaml` from
-# `packages:` is NOT recommended — too much else lives in that file).
-# Instead, redeclare the whole `micro_wake_word:` block here and rely
-# on ESPHome's "later wins" key precedence for that one top-level key.
-# ---------------------------------------------------------------------------
+# Custom "Hey Benson" wake-word model, served by Benson middleware over
+# plain HTTP on the LAN. The manifest references hey_benson.tflite by
+# bare filename, which ESPHome resolves relative to the manifest URL.
+# `models: !extend` ADDS to formatBCE's base list (okay_nabu, kenobi,
+# hey_jarvis, hey_mycroft, stop) so they all coexist; HA's Assist
+# pipeline picks which one the satellite actively listens for via
+# `select.respeaker_kitchen_wake_word`.
+micro_wake_word:
+  models: !extend
+    - model: http://192.168.0.240:8100/microwakeword/hey_benson.json
+      id: hey_benson

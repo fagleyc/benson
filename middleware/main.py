@@ -82,6 +82,13 @@ app.mount(
     StaticFiles(directory=str(Path(__file__).parent / "static")),
     name="static",
 )
+# Custom microWakeWord models — fetched by the ReSpeaker on first boot
+# after a flash and cached on the ESP32-S3 flash partition.
+app.mount(
+    "/microwakeword",
+    StaticFiles(directory="/opt/benson/microwakeword/models"),
+    name="microwakeword",
+)
 
 memory = MemoryStore()
 recipes = RecipeIngester()

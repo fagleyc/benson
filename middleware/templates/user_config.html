@@ -29,10 +29,16 @@
           {% if u.last_updated_at %}
             <div class="small text-secondary">updated {{ u.last_updated_at[:10] }}</div>
           {% endif %}
-          <div class="mt-2 d-flex gap-2">
+          <div class="mt-2 d-flex gap-2 flex-wrap">
             <button class="btn btn-sm btn-outline-warning"
-                    onclick="startWizard({name: '{{ u.name }}', role: '{{ u.role or 'guest' }}', reenroll: true})">
-              Re-enroll
+                    onclick="startWizard({name: '{{ u.name }}', role: '{{ u.role or 'guest' }}', reenroll: true, mode: 'voice'})"
+                    title="Add new voice samples — averages into existing voiceprint">
+              + Voice samples
+            </button>
+            <button class="btn btn-sm btn-outline-warning"
+                    onclick="startWizard({name: '{{ u.name }}', role: '{{ u.role or 'guest' }}', reenroll: true, mode: 'interview'})"
+                    title="Update interview — appends a new dated section to {{ u.name }}.md">
+              Update interview
             </button>
             <button class="btn btn-sm btn-outline-danger"
                     onclick="deleteUser('{{ u.name }}')">
@@ -132,7 +138,9 @@
   <div id="step3" style="display:none">
     <p class="small text-secondary">
       These answers seed the person's memory file. Skip anything you don't
-      want to share.
+      want to share. <strong>Existing answers are shown as hints</strong> —
+      leave the field blank to keep the existing answer; type a new answer
+      to add a new dated section to their memory file.
     </p>
     {% for q in questions %}
       <div class="mb-2">
@@ -143,8 +151,8 @@
     {% endfor %}
     <div id="step3Err" class="small text-danger mb-2"></div>
     <div class="d-flex gap-2">
-      <button class="btn btn-outline-secondary" onclick="showStep(2)">← Back</button>
-      <button class="btn btn-success" onclick="finish()">Finish Enrollment</button>
+      <button id="step3BackBtn" class="btn btn-outline-secondary" onclick="showStep(2)">← Back</button>
+      <button class="btn btn-success" onclick="finish()">Finish</button>
     </div>
   </div>
 
@@ -173,31 +181,50 @@ function showStep(n) {
     el.classList.toggle('fw-bold', i === n - 1);
     el.classList.toggle('text-secondary', i !== n - 1);
   });
+  // Hide Step-3 Back button if we entered the wizard at step 3 directly.
+  const backBtn = document.getElementById('step3BackBtn');
+  if (backBtn) backBtn.style.display = (n === 3 && wizardMode === 'interview') ? 'none' : '';
 }
 
-function startWizard(opts) {
+let wizardMode = 'full';   // 'full' | 'voice' | 'interview'
+
+async function startWizard(opts) {
   enrollState = null;
   sampleCount = 0;
+  wizardMode = (opts && opts.mode) || 'full';
   document.getElementById('wizardResult').innerHTML = '';
   document.getElementById('step1Err').textContent = '';
   document.getElementById('step2Err').textContent = '';
   document.getElementById('step3Err').textContent = '';
-  // Reset record cards
   document.querySelectorAll('[data-script-idx]').forEach(card => {
     card.querySelector('.recording-status').textContent = 'not recorded';
-    card.querySelector('.recording-status').classList.remove('text-success');
+    card.querySelector('.recording-status').classList.remove('text-success', 'text-danger');
     card.querySelector('.playback').style.display = 'none';
     card.querySelector('.rec-btn').textContent = '● Record';
     card.querySelector('.rec-btn').classList.remove('btn-danger');
     card.querySelector('.rec-btn').classList.add('btn-warning');
   });
-  // Reset interview
-  document.querySelectorAll('.interview-field').forEach(f => f.value = '');
-  // Pre-fill if re-enrolling
+  document.querySelectorAll('.interview-field').forEach(f => {
+    f.value = '';
+    f.placeholder = '';
+  });
   if (opts && opts.name) {
     document.getElementById('fldName').value = opts.name;
     document.getElementById('fldName').disabled = true;
     document.getElementById('fldRole').value = opts.role || 'guest';
+    // Pre-populate interview placeholders from existing meta so the user
+    // can SEE what's already on file and decide what to update.
+    try {
+      const dr = await fetch('/advanced/user-config/' + opts.name + '/details');
+      if (dr.ok) {
+        const det = await dr.json();
+        const existing = det.interview || {};
+        document.querySelectorAll('.interview-field').forEach(f => {
+          const v = existing[f.dataset.key];
+          if (v) f.placeholder = '(currently: ' + v.slice(0, 160) + (v.length > 160 ? '…' : '') + ')';
+        });
+      }
+    } catch (e) { console.warn('details fetch failed:', e); }
   } else {
     document.getElementById('fldName').value = '';
     document.getElementById('fldName').disabled = false;
@@ -205,8 +232,27 @@ function startWizard(opts) {
   }
   document.getElementById('fldPhoto').value = '';
   document.getElementById('wizard').style.display = '';
-  showStep(1);
   document.getElementById('wizard').scrollIntoView({behavior:'smooth', block:'start'});
+
+  // Mode-specific entry: jump past steps we don't need.
+  if (opts && opts.name && wizardMode !== 'full') {
+    try {
+      const r = await fetch('/advanced/user-config/start', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({name: opts.name, role: opts.role || 'guest'}),
+      });
+      if (!r.ok) throw new Error('start failed: ' + r.status);
+      enrollState = await r.json();
+    } catch (e) {
+      document.getElementById('step1Err').textContent = String(e);
+      showStep(1);
+      return;
+    }
+    showStep(wizardMode === 'voice' ? 2 : 3);
+  } else {
+    showStep(1);
+  }
 }
 
 function cancelWizard() {
@@ -401,17 +447,25 @@ async function uploadRecording(idx) {
 }
 
 function step2Next() {
-  if (sampleCount < 1) {
+  // In "voice-only" mode we let the user finish from step 2 directly.
+  // In re-enroll modes the user may have skipped recording (e.g. they
+  // only opened the voice flow to view samples) — allow that too, but
+  // require at least one sample on a fresh enrollment.
+  if (wizardMode === 'full' && sampleCount < 1) {
     document.getElementById('step2Err').textContent =
       'Record at least one valid sample before continuing (three is best).';
     return;
   }
   document.getElementById('step2Err').textContent = '';
-  // Release mic when leaving step 2
   if (mediaStream) {
     mediaStream.getTracks().forEach(t => t.stop());
     mediaStream = null;
     analyserNode = null;
+  }
+  if (wizardMode === 'voice') {
+    // Voice-only re-enroll: skip interview and finish.
+    finish();
+    return;
   }
   showStep(3);
 }

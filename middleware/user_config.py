@@ -144,6 +144,30 @@ async def user_config_status() -> dict[str, Any]:
     return {"enrolled": await asyncio.to_thread(vp.list_enrolled)}
 
 
+# ─── Existing details (for the modify flow) ──────────────────────────────
+@router.get("/{name}/details")
+async def user_details(name: str) -> dict[str, Any]:
+    slug = _slugify(name)
+    _check_reserved(slug)
+    meta = vp.load_meta(slug)
+    if not meta:
+        raise HTTPException(404, f"{slug} is not enrolled")
+    md_path = MEMORY_DIR / f"{slug}.md"
+    md_size = md_path.stat().st_size if md_path.exists() else 0
+    return {
+        "name": slug,
+        "display_name": meta.get("display_name") or slug,
+        "role": meta.get("role"),
+        "photo": meta.get("photo"),
+        "sample_count": int(meta.get("sample_count", 0)),
+        "enrolled_at": meta.get("enrolled_at"),
+        "last_updated_at": meta.get("last_updated_at"),
+        "interview": meta.get("interview") or {},
+        "memory_file": str(md_path),
+        "memory_size": md_size,
+    }
+
+
 # ─── Start ───────────────────────────────────────────────────────────────
 @router.post("/start")
 async def start_enrollment(request: Request) -> dict[str, Any]:
@@ -332,8 +356,16 @@ async def complete_enrollment(enrollment_id: str) -> dict[str, Any]:
     state = _load_state(enrollment_id)
     name = state["name"]
     samples = state.get("samples", [])
-    if not samples:
-        raise HTTPException(400, "no voice samples uploaded")
+    # In re-enroll mode we allow zero new voice samples as long as there's
+    # an existing voiceprint to keep AND there's at least an interview
+    # update — otherwise complete is a no-op.
+    prior_meta = vp.load_meta(name)
+    has_prior_voice = bool(prior_meta) and (vp._emb_path(name).exists())
+    interview = state.get("interview") or {}
+    if not samples and not has_prior_voice:
+        raise HTTPException(400, "no voice samples uploaded and no prior voiceprint")
+    if not samples and not interview:
+        raise HTTPException(400, "nothing to update (no new samples, no new interview answers)")
 
     def _embed_all() -> list[dict]:
         # Collect ALL embeddings first, then fold into the voiceprint in
@@ -358,9 +390,12 @@ async def complete_enrollment(enrollment_id: str) -> dict[str, Any]:
                 r["sample_count_after"] = count
         return out
 
-    processed = await asyncio.to_thread(_embed_all)
-    if not processed:
-        raise HTTPException(500, "all embeddings failed")
+    if samples:
+        processed = await asyncio.to_thread(_embed_all)
+        if not processed:
+            raise HTTPException(500, "all embeddings failed")
+    else:
+        processed = []  # interview-only update
 
     meta = vp.load_meta(name)
     existing_samples = meta.get("samples") or []
