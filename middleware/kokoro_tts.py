@@ -171,6 +171,58 @@ async def speak_on_zone(zone_entity_id: str, message: str) -> dict:
     }
 
 
+async def synth_stream(
+    text: str,
+    voice: str = DEFAULT_VOICE,
+    *,
+    speed: float = DEFAULT_SPEED,
+    lang: str | None = None,
+):
+    """Yield (sample_rate, pcm16_bytes) per phrase as Kokoro generates them.
+
+    For the Wyoming TTS server — streaming a sentence-at-a-time lets the
+    satellite begin playback well before the full utterance is synthesized.
+    """
+    async with _lock:
+        lang_code = lang or _voice_to_lang(voice)
+        loop = asyncio.get_running_loop()
+
+        # Run the (blocking) Kokoro generator in a thread, push chunks into
+        # a queue, and yield from the queue here.
+        queue: asyncio.Queue = asyncio.Queue()
+        SENTINEL = object()
+
+        def _producer():
+            try:
+                pipeline = _pipeline_for(lang_code)
+                generator = pipeline(text, voice=voice, speed=speed)
+                for _gs, _ps, audio in generator:
+                    if audio is None:
+                        continue
+                    if hasattr(audio, "cpu"):
+                        audio = audio.cpu().numpy()
+                    pcm16 = np.clip(audio, -1.0, 1.0)
+                    pcm16 = (pcm16 * 32767.0).astype(np.int16).tobytes()
+                    loop.call_soon_threadsafe(queue.put_nowait, pcm16)
+            except Exception as e:
+                loop.call_soon_threadsafe(queue.put_nowait, e)
+            finally:
+                loop.call_soon_threadsafe(queue.put_nowait, SENTINEL)
+
+        producer = asyncio.create_task(asyncio.to_thread(_producer))
+        try:
+            while True:
+                item = await queue.get()
+                if item is SENTINEL:
+                    return
+                if isinstance(item, Exception):
+                    raise item
+                yield SAMPLE_RATE, item
+        finally:
+            if not producer.done():
+                producer.cancel()
+
+
 async def synth_to_file(
     text: str,
     voice: str = DEFAULT_VOICE,

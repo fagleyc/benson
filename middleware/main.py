@@ -62,6 +62,8 @@ app.include_router(listening_router)
 async def _signal_startup():
     start_signal_poller()
     start_google_sync()
+    from wyoming_kokoro import start as start_wyoming_kokoro
+    start_wyoming_kokoro()
 
 # Static audio for Kokoro TTS — Sonos fetches WAVs from here.
 from fastapi.staticfiles import StaticFiles
