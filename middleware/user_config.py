@@ -372,6 +372,100 @@ async def edit_interview_answer(
     }
 
 
+# ─── Bulk interview update (modal "Save & Next" flow) ────────────────────
+@router.post("/{name}/interview-bulk")
+async def edit_interview_bulk(name: str, request: Request) -> dict[str, Any]:
+    """Update one or more interview answers in a single request.
+
+    Body: {"answers": {q_key: "answer string", ...}}
+
+    Behavior:
+      - Validates every q_key against INTERVIEW_QUESTIONS.
+      - Rejects empty payloads.
+      - Merges into JSON metadata (or creates minimal meta for unenrolled
+        members — same pattern as /interview/{q_key}).
+      - Appends ONE `## Interview <date>` section to the .md containing
+        only the questions present in this request (changed-only).
+      - Bumps last_updated_at.
+    """
+    slug = _slugify(name)
+    _check_reserved(slug)
+    body = await request.json()
+    if not isinstance(body, dict):
+        raise HTTPException(400, "expected JSON object {answers: {...}}")
+    answers_in = body.get("answers")
+    if not isinstance(answers_in, dict) or not answers_in:
+        raise HTTPException(400, "answers must be a non-empty object")
+    known_keys = {q["key"] for q in INTERVIEW_QUESTIONS}
+    cleaned: dict[str, str] = {}
+    for k, v in answers_in.items():
+        if k not in known_keys:
+            raise HTTPException(400, f"unknown interview key '{k}'")
+        if not isinstance(v, str):
+            v = str(v)
+        v = v.strip()
+        if not v:
+            continue
+        cleaned[k] = v
+    if not cleaned:
+        raise HTTPException(400, "no non-empty answers provided")
+
+    md_path = MEMORY_DIR / f"{slug}.md"
+    meta = vp.load_meta(slug)
+    if not meta:
+        if not md_path.exists():
+            raise HTTPException(404, f"{slug} is not a household member")
+        meta = {
+            "name": slug,
+            "display_name": slug,
+            "role": KNOWN_ROLES.get(slug),
+            "photo": None,
+            "sample_count": 0,
+            "samples": [],
+            "enrolled_at": None,
+            "last_updated_at": None,
+            "interview": {},
+        }
+
+    interview = dict(meta.get("interview") or {})
+    interview.update(cleaned)
+    meta["interview"] = interview
+    meta["last_updated_at"] = _now_iso()
+    vp.write_meta(slug, meta)
+
+    today = date.today().isoformat()
+    section_lines = [f"## Interview {today}", ""]
+    for q in INTERVIEW_QUESTIONS:
+        if q["key"] in cleaned:
+            section_lines.append(f"- {q['q']} — {cleaned[q['key']]}")
+    section_lines.append("")
+    section = "\n".join(section_lines)
+
+    def _append_md() -> None:
+        if md_path.exists():
+            existing = md_path.read_text()
+            if not existing.endswith("\n"):
+                existing += "\n"
+            md_path.write_text(existing + "\n" + section)
+        else:
+            header = (
+                f"# {meta.get('display_name') or slug}\n\n"
+                f"Facts and context about {meta.get('display_name') or slug}, "
+                "accumulated from past conversations.\n\n"
+            )
+            md_path.write_text(header + section)
+
+    await asyncio.to_thread(_append_md)
+    return {
+        "ok": True,
+        "name": slug,
+        "updated_keys": sorted(cleaned.keys()),
+        "answered_count": len(interview),
+        "last_updated_at": meta["last_updated_at"],
+        "memory_path": str(md_path),
+    }
+
+
 # ─── Recent speakers aggregator ──────────────────────────────────────────
 @router.get("/recent-speakers")
 async def recent_speakers() -> dict[str, Any]:

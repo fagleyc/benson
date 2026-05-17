@@ -2,62 +2,37 @@
 {% block title %}Family — Fagley House Hub{% endblock %}
 {% block content %}
 <style>
-  .uc-avatar {
-    width: 96px; height: 96px; border-radius: 50%;
-    object-fit: cover; border: 1px solid #555; background: #2a3742;
-    display: flex; align-items: center; justify-content: center;
-    font-size: 2.4rem; color: #f39c12; flex-shrink: 0;
-  }
+  /* ─── Card ─── */
   .uc-card { transition: border-color .15s; }
   .uc-card.speaking { border-color: #7fdb9b !important; box-shadow: 0 0 0 1px #7fdb9b inset; }
+  .uc-avatar {
+    width: 60px; height: 60px; border-radius: 50%;
+    object-fit: cover; border: 1px solid #555; background: #2a3742;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 1.6rem; color: #f39c12; flex-shrink: 0;
+  }
   .uc-role-parent { background: #4a3a1a; color: #f7c873; }
   .uc-role-teen   { background: #1f3a4a; color: #7fc3e0; }
   .uc-role-child  { background: #2a4a2a; color: #9ddb9b; }
   .uc-role-guest  { background: #3a3a3a; color: #c0c0c0; }
-  .uc-stat { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .8rem; }
-  .uc-section-header {
-    cursor: pointer; user-select: none;
-    padding: .35rem .5rem; border-radius: 4px;
-    display: flex; justify-content: space-between; align-items: center;
-    background: #1a2128; border: 1px solid #2d3a47;
+  .uc-stat {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: .72rem; color: #8a96a3; line-height: 1.35;
   }
-  .uc-section-header:hover { background: #1f2730; }
-  .uc-section-header .uc-caret { transition: transform .15s; }
-  .uc-section-header.collapsed .uc-caret { transform: rotate(-90deg); }
-  .uc-section-body { padding: .5rem .25rem 0 .25rem; }
-  .uc-q-label { color: #aab; font-size: .82rem; margin-bottom: .15rem; }
-  .uc-q-answer {
-    white-space: pre-wrap; padding: .3rem .55rem;
-    background: #11171c; border: 1px solid #232f3a; border-radius: 4px;
-    font-size: .92rem; min-height: 1.8rem;
+  .uc-card-btns .btn { font-size: .78rem; padding: .25rem .55rem; }
+  .uc-card .uc-name { font-size: 1.05rem; line-height: 1.1; }
+  .uc-card .uc-delete {
+    color: #b66; font-size: .72rem; cursor: pointer;
+    text-decoration: none; opacity: .65;
   }
-  .uc-q-answer.empty { color: #555; font-style: italic; }
-  .uc-q-row { margin-bottom: .55rem; }
-  .uc-edit-link {
-    font-size: .78rem; color: #f39c12; cursor: pointer; margin-left: .5rem;
-  }
-  .uc-edit-link:hover { text-decoration: underline; }
-  .uc-flash { color: #7fdb9b; font-size: .78rem; margin-left: .5rem; opacity: 0; transition: opacity .25s; }
-  .uc-flash.show { opacity: 1; }
-  .uc-sample-row {
-    display: flex; gap: .5rem; align-items: center;
-    padding: .25rem 0; border-bottom: 1px solid #1f2730; font-size: .82rem;
-  }
-  .uc-sample-row:last-child { border-bottom: none; }
-  .uc-sample-meta { color: #888; font-family: ui-monospace, monospace; min-width: 12rem; }
-  .uc-sample-row audio { height: 28px; }
-  .uc-mem-pre {
-    white-space: pre-wrap; background: #11171c; border: 1px solid #232f3a;
-    border-radius: 4px; padding: .5rem; font-size: .8rem; color: #ccd;
-    max-height: 220px; overflow-y: auto; margin: 0;
-  }
+  .uc-card .uc-delete:hover { opacity: 1; text-decoration: underline; }
   .uc-empty-state {
     border: 1px dashed #444; border-radius: 8px; padding: 2.5rem;
     text-align: center; color: #888;
   }
   .speaking-pulse {
     display: inline-block; width: 8px; height: 8px; border-radius: 50%;
-    background: #7fdb9b; margin-left: .4rem; vertical-align: middle;
+    background: #7fdb9b; margin-left: .25rem; vertical-align: middle;
     animation: ucPulse 1.2s ease-in-out infinite;
   }
   @keyframes ucPulse {
@@ -65,6 +40,108 @@
     50% { opacity: .55; box-shadow: 0 0 0 6px rgba(127, 219, 155, 0); }
   }
   .uc-header-stat { font-size: .82rem; color: #889; }
+
+  /* ─── Modal overlay (custom, not Bootstrap) ─── */
+  .uc-modal-backdrop {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.72);
+    backdrop-filter: blur(2px); -webkit-backdrop-filter: blur(2px);
+    display: none; align-items: center; justify-content: center;
+    z-index: 1080; padding: 1rem;
+  }
+  .uc-modal-backdrop.show { display: flex; }
+  .uc-modal {
+    background: #1a2128; border: 1px solid #3a4654; border-radius: 10px;
+    width: 100%; max-width: 600px; max-height: 92vh; display: flex;
+    flex-direction: column; box-shadow: 0 12px 40px rgba(0,0,0,0.55);
+  }
+  .uc-modal-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: .9rem 1.25rem; border-bottom: 1px solid #2d3a47;
+  }
+  .uc-modal-header h5 { margin: 0; color: #f39c12; font-size: 1.05rem; }
+  .uc-modal-body { padding: 1.25rem; overflow-y: auto; }
+  .uc-modal-footer {
+    display: flex; gap: .5rem; padding: .85rem 1.25rem;
+    border-top: 1px solid #2d3a47; align-items: center;
+  }
+  .uc-modal-close {
+    background: none; border: none; color: #888; font-size: 1.4rem;
+    line-height: 1; cursor: pointer; padding: 0 .25rem;
+  }
+  .uc-modal-close:hover { color: #ddd; }
+
+  /* ─── Progress dots ─── */
+  .uc-dots { display: flex; gap: .35rem; align-items: center; justify-content: center; margin-bottom: 1rem; }
+  .uc-dot {
+    width: 11px; height: 11px; border-radius: 50%;
+    border: 1.5px solid #6a7884; background: transparent;
+    cursor: pointer; transition: background .15s, border-color .15s;
+  }
+  .uc-dot.filled { background: #f39c12; border-color: #f39c12; }
+  .uc-dot.half   { background: linear-gradient(90deg, #f39c12 50%, transparent 50%); border-color: #f39c12; }
+  .uc-dot.active { box-shadow: 0 0 0 2px rgba(243,156,18,.35); }
+  .uc-dot:hover { border-color: #f39c12; }
+
+  /* ─── Interview modal body ─── */
+  .uc-iv-question {
+    font-size: 1.05rem; color: #e8ecef; margin-bottom: .85rem; line-height: 1.35;
+  }
+  .uc-iv-saved-tag {
+    display: inline-block; font-size: .7rem; color: #7fdb9b;
+    background: #1a2f23; border: 1px solid #2d4a3a; border-radius: 3px;
+    padding: 1px 6px; margin-left: .5rem; vertical-align: middle;
+  }
+  .uc-iv-hint { color: #8a96a3; font-size: .78rem; margin-top: .3rem; }
+  .uc-iv-textarea { font-size: .95rem; }
+
+  /* ─── Voice modal body ─── */
+  .uc-vc-script {
+    background: #11171c; border-left: 3px solid #f39c12;
+    padding: .75rem 1rem; border-radius: 4px; color: #cdd3d9;
+    font-size: .92rem; line-height: 1.5; margin-bottom: 1rem;
+  }
+  .uc-vc-mic-row {
+    display: flex; align-items: center; gap: 1rem; margin-bottom: .75rem;
+  }
+  .uc-vc-mic {
+    width: 56px; height: 56px; border-radius: 50%;
+    background: #b94a4a; color: #fff; border: none; cursor: pointer;
+    font-size: 1.4rem; display: flex; align-items: center; justify-content: center;
+    transition: background .15s, transform .1s;
+  }
+  .uc-vc-mic:hover { background: #d05a5a; }
+  .uc-vc-mic.recording { background: #f39c12; animation: ucMicPulse 1s ease-in-out infinite; }
+  @keyframes ucMicPulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(243,156,18,0.6); }
+    50%      { box-shadow: 0 0 0 10px rgba(243,156,18,0); }
+  }
+  .uc-vc-vu-wrap { flex: 1; }
+  .uc-vc-vu {
+    height: 10px; background: #1a1f24; border-radius: 5px; overflow: hidden;
+  }
+  .uc-vc-vu-fill { height: 100%; width: 0%; background: #7fdb9b; transition: width .05s; }
+  .uc-vc-timer { font-family: ui-monospace, monospace; font-size: .82rem; color: #aab; min-width: 56px; text-align: right; }
+  .uc-vc-status { font-size: .82rem; color: #aab; margin-top: .35rem; min-height: 1.2em; }
+  .uc-vc-rerec { font-size: .78rem; color: #f39c12; cursor: pointer; }
+  .uc-vc-rerec:hover { text-decoration: underline; }
+
+  /* ─── Memory modal body ─── */
+  .uc-mem-pre {
+    white-space: pre-wrap; background: #11171c; border: 1px solid #232f3a;
+    border-radius: 4px; padding: .75rem; font-size: .82rem; color: #ccd;
+    max-height: 60vh; overflow-y: auto; margin: 0;
+  }
+
+  /* ─── Toast ─── */
+  .uc-toast {
+    position: fixed; bottom: 1.5rem; left: 50%; transform: translateX(-50%);
+    background: #1a2f23; border: 1px solid #2d4a3a; color: #aef0c2;
+    padding: .55rem 1rem; border-radius: 6px; font-size: .88rem;
+    z-index: 1100; opacity: 0; transition: opacity .25s;
+    pointer-events: none;
+  }
+  .uc-toast.show { opacity: 1; }
+  .uc-toast.error { background: #2f1a1a; border-color: #4a2d2d; color: #f0aaaa; }
 </style>
 
 <a href="/advanced" class="text-secondary">← Advanced</a>
@@ -72,127 +149,65 @@
   <div>
     <h2 class="mb-1">Family</h2>
     <div class="uc-header-stat">
-      <span id="ucCountLine">{{ enrolled|length }} member{{ '' if enrolled|length == 1 else 's' }} enrolled</span>
+      <span id="ucCountLine">{{ enrolled|length }} member{{ '' if enrolled|length == 1 else 's' }} listed</span>
       <span class="text-secondary"> · </span>
       <span>last identified: <span id="ucLastSpeaker" class="text-warning">—</span> <span id="ucLastAge" class="text-secondary"></span></span>
     </div>
   </div>
-  <button class="btn btn-warning" onclick="startWizard()">+ Add Family Member</button>
+  <button class="btn btn-warning" onclick="openWizard()">+ Add Family Member</button>
 </div>
 
 {% if not enrolled %}
 <div class="uc-empty-state mb-4">
-  <h5 class="text-secondary">No household members enrolled yet</h5>
+  <h5 class="text-secondary">No household members yet</h5>
   <p class="small mb-3">Add yourself or a family member to start training Benson on voices.</p>
-  <button class="btn btn-warning" onclick="startWizard()">+ Add Family Member</button>
+  <button class="btn btn-warning" onclick="openWizard()">+ Add Family Member</button>
 </div>
 {% endif %}
 
 <div class="row g-3 mb-4" id="enrolledGrid">
   {% for u in enrolled %}
-  <div class="col-12 col-lg-6">
-    <div class="card bg-dark border-secondary uc-card h-100" data-name="{{ u.name }}" id="ucCard-{{ u.name }}">
-      <div class="card-body">
-        <!-- Header row -->
-        <div class="d-flex gap-3 align-items-center mb-2">
+  <div class="col-12 col-md-6 col-lg-3">
+    <div class="card bg-dark border-secondary uc-card h-100" data-name="{{ u.name }}" data-role="{{ u.role or 'guest' }}" id="ucCard-{{ u.name }}">
+      <div class="card-body p-3">
+        <div class="d-flex gap-2 align-items-center mb-2">
           {% if u.photo %}
             <img src="{{ u.photo }}" alt="" class="uc-avatar" style="padding:0">
           {% else %}
             <div class="uc-avatar">{{ (u.name or '?')[0]|upper }}</div>
           {% endif %}
-          <div class="flex-grow-1">
-            <div class="d-flex align-items-center gap-2 flex-wrap">
-              <h4 class="text-warning mb-0">{{ u.name }}</h4>
-              <span class="badge uc-role-{{ u.role or 'guest' }}">{{ u.role or 'guest' }}</span>
-              {% if u.unenrolled %}
-                <span class="badge bg-secondary" title="memory file present, voice not yet enrolled">voice not enrolled</span>
-              {% endif %}
+          <div class="flex-grow-1 min-w-0">
+            <div class="uc-name text-warning fw-bold text-truncate">
+              {{ u.name }}
               <span class="speaking-pulse" id="ucPulse-{{ u.name }}" style="display:none" title="speaking now"></span>
             </div>
-            <div class="uc-stat text-secondary mt-1" id="ucStats-{{ u.name }}">
+            <div class="d-flex align-items-center gap-1 flex-wrap mt-1">
+              <span class="badge uc-role-{{ u.role or 'guest' }}" style="font-size:.65rem">{{ u.role or 'guest' }}</span>
               {% if u.unenrolled %}
-                memory file only · no voiceprint yet
-                {% if u.last_updated_at %} · md updated <span data-bind="updated">{{ u.last_updated_at[:10] }}</span>{% endif %}
-              {% else %}
-                <span data-bind="samples">{{ u.sample_count }}</span> samples
-                {% if u.enrolled_at %} · enrolled {{ u.enrolled_at[:10] }}{% endif %}
-                {% if u.last_updated_at %} · updated <span data-bind="updated">{{ u.last_updated_at[:10] }}</span>{% endif %}
-                · voiceprint <span data-bind="vpsize">…</span>
+                <span class="badge bg-secondary" style="font-size:.65rem" title="memory file present, voice not yet enrolled">no voice</span>
               {% endif %}
             </div>
           </div>
         </div>
 
-        <!-- Voice samples -->
-        <div class="mb-2">
-          <div class="uc-section-header collapsed" onclick="ucToggle(this)" data-target="ucVoice-{{ u.name }}">
-            <strong class="small">Voice samples</strong>
-            <span class="small text-secondary">
-              <span data-bind="samples">{{ u.sample_count }}</span>
-              <span class="uc-caret ms-2">▾</span>
-            </span>
-          </div>
-          <div class="uc-section-body" id="ucVoice-{{ u.name }}" style="display:none">
-            <div data-bind="samples-list" class="mb-2">
-              <div class="text-secondary small fst-italic">loading…</div>
-            </div>
-            <button class="btn btn-sm btn-{{ 'warning' if u.unenrolled else 'outline-warning' }}"
-                    onclick="startWizard({name:'{{ u.name }}', role:'{{ u.role or 'guest' }}', reenroll:true, mode:'voice'})">
-              {% if u.unenrolled %}+ Enroll voice samples{% else %}Add more voice samples{% endif %}
-            </button>
-          </div>
+        <div class="uc-stat mb-2" id="ucStats-{{ u.name }}">
+          {% if u.unenrolled %}
+            <span data-bind="samples">0</span> samples · no voiceprint
+            {% if u.last_updated_at %}<br>md updated <span data-bind="updated">{{ u.last_updated_at[:10] }}</span>{% endif %}
+          {% else %}
+            <span data-bind="samples">{{ u.sample_count }}</span> samples{% if u.enrolled_at %} · enrolled {{ u.enrolled_at[:10] }}{% endif %}
+            {% if u.last_updated_at %}<br>updated <span data-bind="updated">{{ u.last_updated_at[:10] }}</span>{% endif %}
+          {% endif %}
         </div>
 
-        <!-- Interview (default expanded) -->
-        <div class="mb-2">
-          <div class="uc-section-header" onclick="ucToggle(this)" data-target="ucIntv-{{ u.name }}">
-            <strong class="small">Interview</strong>
-            <span class="small text-secondary">
-              <span data-bind="answered">…</span> / {{ questions|length }} answered
-              <span class="uc-caret ms-2">▾</span>
-            </span>
-          </div>
-          <div class="uc-section-body" id="ucIntv-{{ u.name }}">
-            {% for q in questions %}
-              <div class="uc-q-row" data-name="{{ u.name }}" data-key="{{ q.key }}">
-                <div class="uc-q-label">{{ q.q }}
-                  <span class="uc-edit-link" onclick="ucEditStart(this)">Edit</span>
-                  <span class="uc-flash">saved</span>
-                </div>
-                <div class="uc-q-answer empty">—</div>
-              </div>
-            {% endfor %}
-          </div>
+        <div class="d-flex flex-wrap gap-1 uc-card-btns mb-2">
+          <button class="btn btn-sm btn-outline-warning" onclick="openInterview('{{ u.name }}')">Interview</button>
+          <button class="btn btn-sm btn-outline-warning" onclick="openVoice('{{ u.name }}', '{{ u.role or 'guest' }}')">Voice</button>
+          <button class="btn btn-sm btn-outline-secondary" onclick="openMemory('{{ u.name }}')">Memory</button>
         </div>
 
-        <!-- Memory file -->
-        <div class="mb-2">
-          <div class="uc-section-header collapsed" onclick="ucToggle(this)" data-target="ucMem-{{ u.name }}">
-            <strong class="small">Memory file</strong>
-            <span class="small text-secondary">
-              <code data-bind="memory_path">{{ u.name }}.md</code>
-              <span class="uc-caret ms-2">▾</span>
-            </span>
-          </div>
-          <div class="uc-section-body" id="ucMem-{{ u.name }}" style="display:none">
-            <pre class="uc-mem-pre" data-bind="memory_preview">loading…</pre>
-            <div class="small text-secondary mt-1">
-              View full file: <code data-bind="memory_path">/opt/benson/memory/{{ u.name }}.md</code>
-              (SSH to read; not exposed over LAN)
-            </div>
-          </div>
-        </div>
-
-        <!-- Action row -->
-        <div class="d-flex gap-2 mt-3 pt-2 border-top border-secondary">
-          <button class="btn btn-sm btn-outline-warning"
-                  onclick="startWizard({name:'{{ u.name }}', role:'{{ u.role or 'guest' }}', reenroll:true, mode:'voice'})">
-            Add voice samples
-          </button>
-          <div class="flex-grow-1"></div>
-          <button class="btn btn-sm btn-outline-danger" onclick="deleteUser('{{ u.name }}')">
-            Delete
-          </button>
+        <div class="d-flex justify-content-end">
+          <a class="uc-delete" onclick="deleteUser('{{ u.name }}')">Delete</a>
         </div>
       </div>
     </div>
@@ -200,124 +215,153 @@
   {% endfor %}
 </div>
 
-<!-- ─── Wizard ──────────────────────────────────────────────────────── -->
-<div id="wizard" class="card bg-dark border-warning p-3 mb-4" style="display:none">
-  <div class="d-flex justify-content-between align-items-baseline mb-2">
-    <h4 class="mb-0 text-warning" id="wizardTitle">Enrollment</h4>
-    <button class="btn btn-sm btn-outline-secondary" onclick="cancelWizard()">Close</button>
-  </div>
-
-  <div class="d-flex gap-3 mb-3 small">
-    <span id="stepInd1" class="text-warning fw-bold">1. Identity</span>
-    <span class="text-secondary">›</span>
-    <span id="stepInd2" class="text-secondary">2. Voice</span>
-    <span class="text-secondary">›</span>
-    <span id="stepInd3" class="text-secondary">3. Interview</span>
-  </div>
-
-  <!-- Step 1: Identity -->
-  <div id="step1">
-    <div class="mb-2">
-      <label class="small text-secondary">Name (lowercase, used as the filename — e.g. casey, sherry, guest_dave)</label>
-      <input id="fldName" class="form-control bg-dark text-light border-secondary"
-             placeholder="casey">
+<!-- ═══════════════════════ INTERVIEW MODAL ═══════════════════════ -->
+<div class="uc-modal-backdrop" id="ivBackdrop" onclick="ivBackdropClick(event)">
+  <div class="uc-modal" onclick="event.stopPropagation()">
+    <div class="uc-modal-header">
+      <h5 id="ivTitle">Interview</h5>
+      <button class="uc-modal-close" onclick="closeInterview()" aria-label="Close">×</button>
     </div>
-    <div class="mb-2">
-      <label class="small text-secondary">Role</label>
-      <select id="fldRole" class="form-select bg-dark text-light border-secondary">
-        <option value="parent">parent</option>
-        <option value="teen">teen</option>
-        <option value="child">child</option>
-        <option value="guest">guest</option>
-      </select>
+    <div class="uc-modal-body">
+      <div class="uc-dots" id="ivDots"></div>
+      <div class="uc-iv-question" id="ivQuestion">…</div>
+      <textarea id="ivAnswer" class="form-control bg-dark text-light border-secondary uc-iv-textarea"
+                rows="4" placeholder="Type an answer (or leave blank to keep existing / skip)…"></textarea>
+      <div class="uc-iv-hint" id="ivHint">Type your update, or leave unchanged to keep the existing answer.</div>
+      <div class="small text-danger mt-2" id="ivErr"></div>
     </div>
-    <div class="mb-2">
-      <label class="small text-secondary">Photo (optional)</label>
-      <input id="fldPhoto" type="file" accept="image/*" class="form-control bg-dark text-light border-secondary">
-    </div>
-    <div id="step1Err" class="small text-danger mb-2"></div>
-    <div class="d-flex gap-2">
-      <button class="btn btn-warning" onclick="step1Next()">Next →</button>
+    <div class="uc-modal-footer">
+      <button class="btn btn-sm btn-outline-secondary" onclick="ivPrev()" id="ivPrevBtn">← Previous</button>
+      <button class="btn btn-sm btn-outline-secondary" onclick="ivSkip()">Skip</button>
+      <div class="flex-grow-1"></div>
+      <span class="small text-secondary me-2" id="ivCounter"></span>
+      <button class="btn btn-sm btn-warning" onclick="ivSaveNext()" id="ivNextBtn">Save &amp; Next →</button>
     </div>
   </div>
-
-  <!-- Step 2: Voice samples -->
-  <div id="step2" style="display:none">
-    <p class="small text-secondary">
-      Read three short scripts aloud at normal volume — about 15 seconds each.
-      Aim for {{ min_s|int }}–{{ max_s|int }} seconds per sample.
-    </p>
-    <div id="vuRow" class="d-flex gap-2 align-items-center mb-2" style="display:none">
-      <span class="small text-secondary" style="min-width:60px">level</span>
-      <div style="flex:1;height:12px;background:#1a1f24;border-radius:6px;overflow:hidden">
-        <div id="vuFill" style="height:100%;width:0%;background:#7fdb9b;transition:width .05s"></div>
-      </div>
-      <span id="recTimer" class="small text-secondary" style="min-width:60px;text-align:right">0.0s</span>
-    </div>
-    {% for s in scripts %}
-    <div class="card bg-dark border-secondary p-2 mb-2" data-script-idx="{{ loop.index0 }}">
-      <div class="d-flex justify-content-between align-items-baseline">
-        <strong>Script {{ loop.index }}</strong>
-        <span class="small recording-status text-secondary">not recorded</span>
-      </div>
-      <p class="mb-2 small" style="line-height:1.4">{{ s }}</p>
-      <div class="d-flex gap-2">
-        <button class="btn btn-sm btn-warning rec-btn" onclick="toggleRecord({{ loop.index0 }})">● Record</button>
-        <audio class="playback" controls style="display:none;height:32px"></audio>
-      </div>
-    </div>
-    {% endfor %}
-    <div id="step2Err" class="small text-danger mb-2"></div>
-    <div class="d-flex gap-2">
-      <button id="step2BackBtn" class="btn btn-outline-secondary" onclick="showStep(1)">← Back</button>
-      <button class="btn btn-warning" onclick="step2Next()">Next →</button>
-    </div>
-  </div>
-
-  <!-- Step 3: Interview -->
-  <div id="step3" style="display:none">
-    <p class="small text-secondary">
-      These answers seed the person's memory file. Skip anything you don't
-      want to share. <strong>Existing answers are shown as hints</strong> —
-      leave the field blank to keep the existing answer; type a new answer
-      to add a new dated section to their memory file.
-    </p>
-    {% for q in questions %}
-      <div class="mb-2">
-        <label class="small text-secondary">{{ q.q }}</label>
-        <textarea class="form-control bg-dark text-light border-secondary interview-field"
-                  data-key="{{ q.key }}" rows="2"></textarea>
-      </div>
-    {% endfor %}
-    <div id="step3Err" class="small text-danger mb-2"></div>
-    <div class="d-flex gap-2">
-      <button id="step3BackBtn" class="btn btn-outline-secondary" onclick="showStep(2)">← Back</button>
-      <button class="btn btn-success" onclick="finish()">Finish</button>
-    </div>
-  </div>
-
-  <div id="wizardResult" class="mt-3 small"></div>
 </div>
+
+<!-- ═══════════════════════ VOICE MODAL ═══════════════════════ -->
+<div class="uc-modal-backdrop" id="vcBackdrop" onclick="vcBackdropClick(event)">
+  <div class="uc-modal" onclick="event.stopPropagation()">
+    <div class="uc-modal-header">
+      <h5 id="vcTitle">Record voice samples</h5>
+      <button class="uc-modal-close" onclick="closeVoice()" aria-label="Close">×</button>
+    </div>
+    <div class="uc-modal-body">
+      <div class="uc-dots" id="vcDots"></div>
+      <div class="uc-vc-script" id="vcScript">…</div>
+      <div class="uc-vc-mic-row">
+        <button class="uc-vc-mic" id="vcMic" onclick="vcToggleRecord()" title="record / stop">●</button>
+        <div class="uc-vc-vu-wrap">
+          <div class="uc-vc-vu"><div class="uc-vc-vu-fill" id="vcVuFill"></div></div>
+          <div class="uc-vc-status" id="vcStatus">not recorded</div>
+        </div>
+        <div class="uc-vc-timer" id="vcTimer">0.0s</div>
+      </div>
+      <audio id="vcPlayback" controls style="width:100%;display:none;height:36px;margin-top:.25rem"></audio>
+      <div class="mt-2"><span class="uc-vc-rerec" id="vcRerec" style="display:none" onclick="vcReRecord()">Re-record</span></div>
+      <div class="small text-danger mt-2" id="vcErr"></div>
+    </div>
+    <div class="uc-modal-footer">
+      <button class="btn btn-sm btn-outline-secondary" onclick="vcPrev()" id="vcPrevBtn">← Previous</button>
+      <button class="btn btn-sm btn-outline-secondary" onclick="vcSkip()" id="vcSkipBtn">Skip</button>
+      <div class="flex-grow-1"></div>
+      <span class="small text-secondary me-2" id="vcCounter"></span>
+      <button class="btn btn-sm btn-warning" onclick="vcSaveNext()" id="vcNextBtn">Save &amp; Next →</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════ MEMORY MODAL ═══════════════════════ -->
+<div class="uc-modal-backdrop" id="memBackdrop" onclick="memBackdropClick(event)">
+  <div class="uc-modal" onclick="event.stopPropagation()" style="max-width:720px">
+    <div class="uc-modal-header">
+      <h5 id="memTitle">Memory file</h5>
+      <button class="uc-modal-close" onclick="closeMemory()" aria-label="Close">×</button>
+    </div>
+    <div class="uc-modal-body">
+      <pre class="uc-mem-pre" id="memBody">loading…</pre>
+    </div>
+    <div class="uc-modal-footer">
+      <span class="small text-secondary">Edit via SSH or the inline Interview / Voice flows — this file is append-only by design.</span>
+      <div class="flex-grow-1"></div>
+      <button class="btn btn-sm btn-outline-secondary" onclick="closeMemory()">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════ WIZARD MODAL (Add Family Member) ═══════════════════════ -->
+<div class="uc-modal-backdrop" id="wzBackdrop" onclick="wzBackdropClick(event)">
+  <div class="uc-modal" onclick="event.stopPropagation()">
+    <div class="uc-modal-header">
+      <h5 id="wzTitle">Add Family Member</h5>
+      <button class="uc-modal-close" onclick="closeWizard()" aria-label="Close">×</button>
+    </div>
+    <div class="uc-modal-body">
+      <div class="uc-dots" id="wzDots"></div>
+      <div id="wzStep1">
+        <div class="mb-2">
+          <label class="small text-secondary">Name (lowercase, used as filename — e.g. casey, guest_dave)</label>
+          <input id="wzName" class="form-control bg-dark text-light border-secondary" placeholder="casey">
+        </div>
+        <div class="mb-2">
+          <label class="small text-secondary">Role</label>
+          <select id="wzRole" class="form-select bg-dark text-light border-secondary">
+            <option value="parent">parent</option>
+            <option value="teen">teen</option>
+            <option value="child">child</option>
+            <option value="guest">guest</option>
+          </select>
+        </div>
+        <div class="mb-2">
+          <label class="small text-secondary">Photo (optional)</label>
+          <input id="wzPhoto" type="file" accept="image/*" class="form-control bg-dark text-light border-secondary">
+        </div>
+        <div class="small text-danger" id="wzStep1Err"></div>
+      </div>
+      <div id="wzStep2" style="display:none">
+        <div class="uc-vc-script" id="wzScript">…</div>
+        <div class="uc-vc-mic-row">
+          <button class="uc-vc-mic" id="wzMic" onclick="wzToggleRecord()">●</button>
+          <div class="uc-vc-vu-wrap">
+            <div class="uc-vc-vu"><div class="uc-vc-vu-fill" id="wzVuFill"></div></div>
+            <div class="uc-vc-status" id="wzVcStatus">not recorded</div>
+          </div>
+          <div class="uc-vc-timer" id="wzTimer">0.0s</div>
+        </div>
+        <audio id="wzPlayback" controls style="width:100%;display:none;height:36px;margin-top:.25rem"></audio>
+        <div class="mt-2"><span class="uc-vc-rerec" id="wzRerec" style="display:none" onclick="wzReRecord()">Re-record</span></div>
+        <div class="small text-danger mt-2" id="wzStep2Err"></div>
+        <div class="small text-secondary mt-2" id="wzStep2Counter"></div>
+      </div>
+      <div id="wzStep3" style="display:none">
+        <div class="uc-iv-question" id="wzQuestion">…</div>
+        <textarea id="wzAnswer" class="form-control bg-dark text-light border-secondary uc-iv-textarea" rows="4"
+                  placeholder="Type an answer (or skip)…"></textarea>
+        <div class="uc-iv-hint">Skip anything you don't want to share. Answers feed the new member's memory file.</div>
+        <div class="small text-danger mt-2" id="wzStep3Err"></div>
+      </div>
+      <div id="wzResult" class="small mt-2"></div>
+    </div>
+    <div class="uc-modal-footer">
+      <button class="btn btn-sm btn-outline-secondary" onclick="wzPrev()" id="wzPrevBtn">← Previous</button>
+      <button class="btn btn-sm btn-outline-secondary" onclick="wzSkip()" id="wzSkipBtn" style="display:none">Skip</button>
+      <div class="flex-grow-1"></div>
+      <span class="small text-secondary me-2" id="wzCounter"></span>
+      <button class="btn btn-sm btn-warning" onclick="wzNext()" id="wzNextBtn">Next →</button>
+    </div>
+  </div>
+</div>
+
+<div class="uc-toast" id="ucToast"></div>
 
 <script>
 const UC_QUESTIONS = {{ questions|tojson }};
+const UC_SCRIPTS = {{ scripts|tojson }};
+const UC_MIN_S = {{ min_s|float }};
+const UC_MAX_S = {{ max_s|float }};
 
-function ucToggle(headerEl) {
-  const targetId = headerEl.dataset.target;
-  const body = document.getElementById(targetId);
-  if (!body) return;
-  const willShow = body.style.display === 'none';
-  body.style.display = willShow ? '' : 'none';
-  headerEl.classList.toggle('collapsed', !willShow);
-}
-
-function ucFormatBytes(n) {
-  if (!n || n < 0) return '—';
-  if (n < 1024) return n + 'B';
-  if (n < 1024 * 1024) return (n / 1024).toFixed(1) + 'KB';
-  return (n / 1024 / 1024).toFixed(1) + 'MB';
-}
-
+// ─── Utility ────────────────────────────────────────────────────────────
 function ucEsc(s) {
   return String(s == null ? '' : s).replace(/[&<>"']/g, c =>
     ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -327,6 +371,15 @@ function ucBind(card, selector, fn) {
   card.querySelectorAll('[data-bind="' + selector + '"]').forEach(fn);
 }
 
+function ucToast(msg, isError) {
+  const t = document.getElementById('ucToast');
+  t.textContent = msg;
+  t.classList.toggle('error', !!isError);
+  t.classList.add('show');
+  clearTimeout(t._h);
+  t._h = setTimeout(() => t.classList.remove('show'), 2400);
+}
+
 async function ucHydrateCard(name) {
   const card = document.getElementById('ucCard-' + name);
   if (!card) return;
@@ -334,121 +387,15 @@ async function ucHydrateCard(name) {
     const r = await fetch('/advanced/user-config/' + name + '/details');
     if (!r.ok) throw new Error('details ' + r.status);
     const d = await r.json();
-    ucBind(card, 'vpsize', el => el.textContent = ucFormatBytes(d.voiceprint_size));
     ucBind(card, 'samples', el => el.textContent = (d.samples || []).length || d.sample_count || 0);
     ucBind(card, 'updated', el => el.textContent = (d.last_updated_at || '').slice(0,10) || '—');
-    ucBind(card, 'memory_preview', el => el.textContent = d.memory_preview || '(empty)');
-    ucBind(card, 'memory_path', el => el.textContent = d.memory_path || '');
-
-    // Samples list
-    const listEl = card.querySelector('[data-bind="samples-list"]');
-    if (listEl) {
-      const rows = d.samples || [];
-      if (rows.length === 0) {
-        listEl.innerHTML = '<div class="text-secondary small fst-italic">No raw samples found.</div>';
-      } else {
-        listEl.innerHTML = rows.map(s => (
-          '<div class="uc-sample-row">' +
-            '<span class="uc-sample-meta">' +
-              ucEsc(s.filename) + ' · ' + (s.duration_s || 0).toFixed(1) + 's · ' +
-              ucEsc((s.recorded_at || '').slice(0,16).replace('T',' ')) +
-            '</span>' +
-            '<audio controls preload="none" src="' + s.audio_url + '"></audio>' +
-          '</div>'
-        )).join('');
-      }
-    }
-
-    // Interview answers
-    const interview = d.interview || {};
-    let answered = 0;
-    card.querySelectorAll('.uc-q-row').forEach(row => {
-      const key = row.dataset.key;
-      const a = interview[key] || '';
-      const ans = row.querySelector('.uc-q-answer');
-      if (a) {
-        answered++;
-        ans.textContent = a;
-        ans.classList.remove('empty');
-      } else {
-        ans.textContent = '—';
-        ans.classList.add('empty');
-      }
-    });
-    ucBind(card, 'answered', el => el.textContent = answered);
+    card._details = d;
   } catch (e) {
     console.warn('hydrate ' + name + ' failed:', e);
   }
 }
 
-function ucEditStart(linkEl) {
-  const row = linkEl.closest('.uc-q-row');
-  if (!row || row.querySelector('textarea')) return;
-  const name = row.dataset.name;
-  const key = row.dataset.key;
-  const ans = row.querySelector('.uc-q-answer');
-  const current = ans.classList.contains('empty') ? '' : ans.textContent;
-  const editor = document.createElement('div');
-  editor.innerHTML =
-    '<textarea class="form-control form-control-sm bg-dark text-light border-secondary" rows="3">' +
-      ucEsc(current) +
-    '</textarea>' +
-    '<div class="d-flex gap-2 mt-1">' +
-      '<button class="btn btn-sm btn-success uc-save-btn">Save</button>' +
-      '<button class="btn btn-sm btn-outline-secondary uc-cancel-btn">Cancel</button>' +
-      '<span class="small text-danger uc-edit-err"></span>' +
-    '</div>';
-  ans.style.display = 'none';
-  linkEl.style.display = 'none';
-  ans.after(editor);
-  const ta = editor.querySelector('textarea');
-  ta.focus();
-  ta.setSelectionRange(ta.value.length, ta.value.length);
-  editor.querySelector('.uc-cancel-btn').addEventListener('click', () => {
-    editor.remove();
-    ans.style.display = '';
-    linkEl.style.display = '';
-  });
-  editor.querySelector('.uc-save-btn').addEventListener('click', async () => {
-    const v = (ta.value || '').trim();
-    const errEl = editor.querySelector('.uc-edit-err');
-    errEl.textContent = '';
-    if (!v) { errEl.textContent = 'Answer cannot be empty.'; return; }
-    try {
-      const r = await fetch('/advanced/user-config/' + name + '/interview/' + key, {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({answer: v}),
-      });
-      if (!r.ok) throw new Error(await r.text());
-      const j = await r.json();
-      ans.textContent = j.answer;
-      ans.classList.remove('empty');
-      editor.remove();
-      ans.style.display = '';
-      linkEl.style.display = '';
-      // Bump the updated badge + answered count in stats
-      const card = document.getElementById('ucCard-' + name);
-      if (card) {
-        ucBind(card, 'updated', el => el.textContent = (j.last_updated_at || '').slice(0,10));
-        let answered = 0;
-        card.querySelectorAll('.uc-q-row .uc-q-answer').forEach(a => {
-          if (!a.classList.contains('empty')) answered++;
-        });
-        ucBind(card, 'answered', el => el.textContent = answered);
-      }
-      const flash = row.querySelector('.uc-flash');
-      if (flash) {
-        flash.classList.add('show');
-        setTimeout(() => flash.classList.remove('show'), 1500);
-      }
-    } catch (e) {
-      errEl.textContent = 'Save failed: ' + e;
-    }
-  });
-}
-
-// ─── Recent speakers polling ─────────────────────────────────────────
+// ─── Recent speakers polling ────────────────────────────────────────────
 async function ucPollSpeakers() {
   try {
     const r = await fetch('/api/voice/latest-speaker');
@@ -465,7 +412,6 @@ async function ucPollSpeakers() {
       lastSpeakerEl.textContent = '—';
       lastAgeEl.textContent = '';
     }
-    // Pulse on cards matching the latest speaker within 30s
     document.querySelectorAll('[id^="ucCard-"]').forEach(card => {
       const nm = card.dataset.name;
       const pulse = document.getElementById('ucPulse-' + nm);
@@ -477,175 +423,326 @@ async function ucPollSpeakers() {
   } catch(e) { /* silent */ }
 }
 
-// Hydrate every card on load, then poll for speakers.
 document.querySelectorAll('[id^="ucCard-"]').forEach(card => {
   ucHydrateCard(card.dataset.name);
 });
 ucPollSpeakers();
 setInterval(ucPollSpeakers, 5000);
 
-// ─── Wizard ──────────────────────────────────────────────────────────
-let enrollState = null;
-let mediaStream = null;
-let mediaRecorder = null;
-let recChunks = [];
-let recStartTs = 0;
-let recTimerHandle = null;
-let recordingIdx = -1;
-let analyserNode = null;
-let vuRafHandle = null;
-let sampleCount = 0;
-let wizardMode = 'full';
-
-function showStep(n) {
-  document.getElementById('step1').style.display = n === 1 ? '' : 'none';
-  document.getElementById('step2').style.display = n === 2 ? '' : 'none';
-  document.getElementById('step3').style.display = n === 3 ? '' : 'none';
-  ['stepInd1','stepInd2','stepInd3'].forEach((id, i) => {
-    const el = document.getElementById(id);
-    el.classList.toggle('text-warning', i === n - 1);
-    el.classList.toggle('fw-bold', i === n - 1);
-    el.classList.toggle('text-secondary', i !== n - 1);
-  });
-  const backBtn = document.getElementById('step3BackBtn');
-  if (backBtn) backBtn.style.display = (n === 3 && wizardMode !== 'full') ? 'none' : '';
-  const step2BackBtn = document.getElementById('step2BackBtn');
-  if (step2BackBtn) step2BackBtn.style.display = (n === 2 && wizardMode === 'voice') ? 'none' : '';
+// ─── Modal helpers ──────────────────────────────────────────────────────
+function showBackdrop(id, show) {
+  document.getElementById(id).classList.toggle('show', !!show);
 }
 
-async function startWizard(opts) {
-  enrollState = null;
-  sampleCount = 0;
-  wizardMode = (opts && opts.mode) || 'full';
-  document.getElementById('wizardTitle').textContent =
-    wizardMode === 'voice' ? 'Add voice samples'
-    : wizardMode === 'interview' ? 'Update interview'
-    : 'Add Family Member';
-  document.getElementById('wizardResult').innerHTML = '';
-  document.getElementById('step1Err').textContent = '';
-  document.getElementById('step2Err').textContent = '';
-  document.getElementById('step3Err').textContent = '';
-  document.querySelectorAll('[data-script-idx]').forEach(card => {
-    card.querySelector('.recording-status').textContent = 'not recorded';
-    card.querySelector('.recording-status').classList.remove('text-success', 'text-danger');
-    card.querySelector('.playback').style.display = 'none';
-    card.querySelector('.rec-btn').textContent = '● Record';
-    card.querySelector('.rec-btn').classList.remove('btn-danger');
-    card.querySelector('.rec-btn').classList.add('btn-warning');
-  });
-  document.querySelectorAll('.interview-field').forEach(f => {
-    f.value = '';
-    f.placeholder = '';
-  });
-  if (opts && opts.name) {
-    document.getElementById('fldName').value = opts.name;
-    document.getElementById('fldName').disabled = true;
-    document.getElementById('fldRole').value = opts.role || 'guest';
-    try {
-      const dr = await fetch('/advanced/user-config/' + opts.name + '/details');
-      if (dr.ok) {
-        const det = await dr.json();
-        const existing = det.interview || {};
-        document.querySelectorAll('.interview-field').forEach(f => {
-          const v = existing[f.dataset.key];
-          if (v) f.placeholder = '(currently: ' + v.slice(0, 160) + (v.length > 160 ? '…' : '') + ')';
-        });
-      }
-    } catch (e) { console.warn('details fetch failed:', e); }
-  } else {
-    document.getElementById('fldName').value = '';
-    document.getElementById('fldName').disabled = false;
-    document.getElementById('fldRole').value = 'parent';
-  }
-  document.getElementById('fldPhoto').value = '';
-  document.getElementById('wizard').style.display = '';
-  document.getElementById('wizard').scrollIntoView({behavior:'smooth', block:'start'});
-
-  if (opts && opts.name && wizardMode !== 'full') {
-    try {
-      const r = await fetch('/advanced/user-config/start', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({name: opts.name, role: opts.role || 'guest'}),
-      });
-      if (!r.ok) throw new Error('start failed: ' + r.status);
-      enrollState = await r.json();
-    } catch (e) {
-      document.getElementById('step1Err').textContent = String(e);
-      showStep(1);
-      return;
-    }
-    showStep(wizardMode === 'voice' ? 2 : 3);
-  } else {
-    showStep(1);
+function renderDots(containerId, total, currentIdx, statusFn) {
+  // statusFn(i) -> 'filled' | 'half' | 'empty'
+  const c = document.getElementById(containerId);
+  c.innerHTML = '';
+  for (let i = 0; i < total; i++) {
+    const dot = document.createElement('span');
+    dot.className = 'uc-dot ' + statusFn(i);
+    if (i === currentIdx) dot.classList.add('active');
+    dot.title = 'Question ' + (i + 1);
+    dot.onclick = () => c._jump && c._jump(i);
+    c.appendChild(dot);
   }
 }
 
-function cancelWizard() {
-  stopRecording(true);
-  if (mediaStream) {
-    mediaStream.getTracks().forEach(t => t.stop());
-    mediaStream = null;
+// Global ESC handler
+document.addEventListener('keydown', (ev) => {
+  if (ev.key === 'Escape') {
+    if (document.getElementById('ivBackdrop').classList.contains('show')) closeInterview();
+    else if (document.getElementById('vcBackdrop').classList.contains('show')) closeVoice();
+    else if (document.getElementById('memBackdrop').classList.contains('show')) closeMemory();
+    else if (document.getElementById('wzBackdrop').classList.contains('show')) closeWizard();
   }
-  document.getElementById('wizard').style.display = 'none';
-  enrollState = null;
-}
+});
 
-async function step1Next() {
-  const name = (document.getElementById('fldName').value || '').trim().toLowerCase();
-  const role = document.getElementById('fldRole').value;
-  if (!name) {
-    document.getElementById('step1Err').textContent = 'Name is required.';
-    return;
-  }
-  if (!/^[a-z][a-z0-9_-]{0,30}$/.test(name)) {
-    document.getElementById('step1Err').textContent = 'Name must start with a letter, lowercase, no spaces.';
-    return;
-  }
-  document.getElementById('step1Err').textContent = '';
+// ═══════════════════════ INTERVIEW MODAL ═══════════════════════
+let ivState = null;
+// { name, idx, existing: {key:val}, edits: {key:val} }
+
+async function openInterview(name) {
+  let existing = {};
   try {
-    const r = await fetch('/advanced/user-config/start', {
+    const r = await fetch('/advanced/user-config/' + name + '/details');
+    if (r.ok) {
+      const d = await r.json();
+      existing = d.interview || {};
+    }
+  } catch(e) { /* tolerate */ }
+  ivState = { name, idx: 0, existing, edits: {} };
+  document.getElementById('ivTitle').textContent = name + "'s Interview";
+  document.getElementById('ivErr').textContent = '';
+  document.getElementById('ivDots')._jump = ivJump;
+  ivRender();
+  showBackdrop('ivBackdrop', true);
+  setTimeout(() => document.getElementById('ivAnswer').focus(), 60);
+}
+
+function closeInterview() {
+  if (ivState && Object.keys(ivState.edits).length > 0) {
+    if (!confirm('You have unsaved edits. Close without saving?')) return;
+  }
+  showBackdrop('ivBackdrop', false);
+  ivState = null;
+}
+
+function ivBackdropClick(ev) {
+  if (ev.target === document.getElementById('ivBackdrop')) closeInterview();
+}
+
+function ivRender() {
+  if (!ivState) return;
+  const total = UC_QUESTIONS.length;
+  const i = ivState.idx;
+  const q = UC_QUESTIONS[i];
+  const existing = ivState.existing[q.key] || '';
+  const edit = ivState.edits[q.key];
+
+  document.getElementById('ivQuestion').innerHTML =
+    ucEsc(q.q) + (existing ? '<span class="uc-iv-saved-tag">currently saved</span>' : '');
+
+  const ta = document.getElementById('ivAnswer');
+  // Show pending edit if any, else seed with existing so user can revise.
+  ta.value = (edit !== undefined) ? edit : existing;
+
+  document.getElementById('ivHint').textContent =
+    existing
+      ? "Edit and Save & Next to update, or clear to skip. (Existing answer kept if you skip.)"
+      : "Type an answer, or click Skip to move on.";
+
+  document.getElementById('ivCounter').textContent = (i + 1) + ' / ' + total;
+  document.getElementById('ivPrevBtn').disabled = (i === 0);
+  document.getElementById('ivNextBtn').textContent =
+    (i === total - 1) ? 'Finish' : 'Save & Next →';
+
+  renderDots('ivDots', total, i, (idx) => {
+    const k = UC_QUESTIONS[idx].key;
+    if (ivState.edits[k] !== undefined) return 'half';
+    if (ivState.existing[k]) return 'filled';
+    return 'empty';
+  });
+}
+
+function ivCaptureCurrent() {
+  if (!ivState) return;
+  const q = UC_QUESTIONS[ivState.idx];
+  const v = (document.getElementById('ivAnswer').value || '').trim();
+  const existing = (ivState.existing[q.key] || '').trim();
+  if (v && v !== existing) {
+    ivState.edits[q.key] = v;
+  } else {
+    // Equal to existing or empty — drop any pending edit for this q.
+    delete ivState.edits[q.key];
+  }
+}
+
+function ivJump(i) {
+  ivCaptureCurrent();
+  ivState.idx = i;
+  ivRender();
+}
+
+function ivPrev() {
+  if (!ivState || ivState.idx === 0) return;
+  ivCaptureCurrent();
+  ivState.idx--;
+  ivRender();
+}
+
+function ivSkip() {
+  if (!ivState) return;
+  // Treat as "leave unchanged" — clear any pending edit and advance.
+  delete ivState.edits[UC_QUESTIONS[ivState.idx].key];
+  if (ivState.idx < UC_QUESTIONS.length - 1) {
+    ivState.idx++;
+    ivRender();
+  } else {
+    ivFinish();
+  }
+}
+
+async function ivSaveNext() {
+  if (!ivState) return;
+  ivCaptureCurrent();
+  if (ivState.idx < UC_QUESTIONS.length - 1) {
+    ivState.idx++;
+    ivRender();
+    document.getElementById('ivAnswer').focus();
+  } else {
+    await ivFinish();
+  }
+}
+
+async function ivFinish() {
+  if (!ivState) return;
+  const edits = ivState.edits;
+  if (!edits || Object.keys(edits).length === 0) {
+    closeInterview();
+    ucToast('No changes to save.');
+    return;
+  }
+  const name = ivState.name;
+  document.getElementById('ivErr').textContent = '';
+  try {
+    const r = await fetch('/advanced/user-config/' + name + '/interview-bulk', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({name, role}),
+      body: JSON.stringify({answers: edits}),
     });
-    if (!r.ok) throw new Error('start failed: ' + r.status + ' ' + await r.text());
-    enrollState = await r.json();
+    if (!r.ok) throw new Error(await r.text());
+    ivState = null; // mark clean to bypass close confirm
+    showBackdrop('ivBackdrop', false);
+    ucToast('Interview saved.');
+    setTimeout(() => window.location.reload(), 700);
   } catch (e) {
-    document.getElementById('step1Err').textContent = String(e);
-    return;
+    document.getElementById('ivErr').textContent = 'Save failed: ' + e;
   }
-  const photoFile = document.getElementById('fldPhoto').files[0];
-  if (photoFile) {
-    try {
-      const fd = new FormData();
-      fd.append('photo', photoFile);
-      await fetch('/advanced/user-config/' + enrollState.enrollment_id + '/photo', {
-        method: 'POST', body: fd,
-      });
-    } catch (e) { console.warn('photo upload failed:', e); }
-  }
-  showStep(2);
 }
 
-async function ensureMic() {
-  if (mediaStream) return mediaStream;
+// Keyboard nav within interview
+document.getElementById('ivAnswer').addEventListener('keydown', (ev) => {
+  if ((ev.metaKey || ev.ctrlKey) && ev.key === 'Enter') {
+    ev.preventDefault();
+    ivSaveNext();
+  }
+});
+
+// ═══════════════════════ VOICE MODAL ═══════════════════════
+let vcState = null;
+// { name, role, idx (0..2), enrollment_id, recordings: [ {ok, dur} | null x 3 ] }
+let vcMedia = { stream: null, recorder: null, chunks: [], startTs: 0, timer: null, vuRaf: null, analyser: null, recording: false };
+
+async function openVoice(name, role) {
+  // Start an enrollment server-side so we can POST samples.
+  let enr;
+  try {
+    const r = await fetch('/advanced/user-config/start', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({name, role: role || 'guest'}),
+    });
+    if (!r.ok) throw new Error(await r.text());
+    enr = await r.json();
+  } catch (e) {
+    ucToast('Voice flow failed to start: ' + e, true);
+    return;
+  }
+  vcState = {
+    name, role: role || 'guest',
+    idx: 0, enrollment_id: enr.enrollment_id,
+    recordings: [null, null, null],
+  };
+  document.getElementById('vcTitle').textContent = 'Record voice samples for ' + name;
+  document.getElementById('vcErr').textContent = '';
+  document.getElementById('vcDots')._jump = vcJump;
+  vcRender();
+  showBackdrop('vcBackdrop', true);
+}
+
+function closeVoice() {
+  vcStopRecorder(true);
+  vcStopMic();
+  showBackdrop('vcBackdrop', false);
+  vcState = null;
+}
+
+function vcBackdropClick(ev) {
+  if (ev.target === document.getElementById('vcBackdrop')) closeVoice();
+}
+
+function vcRender() {
+  if (!vcState) return;
+  const total = 3;
+  const i = vcState.idx;
+  document.getElementById('vcScript').textContent = UC_SCRIPTS[i];
+  document.getElementById('vcCounter').textContent = (i + 1) + ' / ' + total;
+  document.getElementById('vcPrevBtn').disabled = (i === 0);
+  const rec = vcState.recordings[i];
+  document.getElementById('vcStatus').textContent = rec
+    ? ('saved · ' + rec.dur.toFixed(1) + 's')
+    : 'not recorded';
+  document.getElementById('vcRerec').style.display = rec ? '' : 'none';
+  document.getElementById('vcPlayback').style.display = 'none';
+  document.getElementById('vcPlayback').src = '';
+  document.getElementById('vcVuFill').style.width = '0%';
+  document.getElementById('vcTimer').textContent = '0.0s';
+  document.getElementById('vcMic').classList.remove('recording');
+  document.getElementById('vcMic').textContent = '●';
+
+  const savedCount = vcState.recordings.filter(r => r).length;
+  document.getElementById('vcNextBtn').textContent =
+    (i === total - 1) ? 'Finish & Save' : 'Save & Next →';
+
+  renderDots('vcDots', total, i, (idx) =>
+    vcState.recordings[idx] ? 'filled' : 'empty'
+  );
+}
+
+function vcJump(i) {
+  vcStopRecorder(true);
+  vcState.idx = i;
+  vcRender();
+}
+
+function vcPrev() {
+  if (vcState.idx === 0) return;
+  vcStopRecorder(true);
+  vcState.idx--;
+  vcRender();
+}
+
+function vcSkip() {
+  if (vcState.idx < 2) {
+    vcStopRecorder(true);
+    vcState.idx++;
+    vcRender();
+  } else {
+    vcFinish();
+  }
+}
+
+function vcSaveNext() {
+  if (vcState.idx < 2) {
+    vcStopRecorder(true);
+    vcState.idx++;
+    vcRender();
+  } else {
+    vcFinish();
+  }
+}
+
+function vcReRecord() {
+  vcState.recordings[vcState.idx] = null;
+  vcRender();
+}
+
+async function ensureMic(target) {
+  if (vcMedia.stream) return vcMedia.stream;
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
     throw new Error('mic API unavailable (needs HTTPS or localhost)');
   }
-  mediaStream = await navigator.mediaDevices.getUserMedia({audio: true});
+  vcMedia.stream = await navigator.mediaDevices.getUserMedia({audio: true});
   const ac = new (window.AudioContext || window.webkitAudioContext)();
-  const src = ac.createMediaStreamSource(mediaStream);
-  analyserNode = ac.createAnalyser();
-  analyserNode.fftSize = 512;
-  src.connect(analyserNode);
-  return mediaStream;
+  const src = ac.createMediaStreamSource(vcMedia.stream);
+  vcMedia.analyser = ac.createAnalyser();
+  vcMedia.analyser.fftSize = 512;
+  src.connect(vcMedia.analyser);
+  return vcMedia.stream;
 }
 
-function paintVU() {
-  if (!analyserNode) return;
-  const buf = new Uint8Array(analyserNode.fftSize);
-  analyserNode.getByteTimeDomainData(buf);
+function vcStopMic() {
+  if (vcMedia.stream) {
+    vcMedia.stream.getTracks().forEach(t => t.stop());
+    vcMedia.stream = null;
+    vcMedia.analyser = null;
+  }
+}
+
+function paintVU(fillId) {
+  if (!vcMedia.analyser) return;
+  const buf = new Uint8Array(vcMedia.analyser.fftSize);
+  vcMedia.analyser.getByteTimeDomainData(buf);
   let sum = 0;
   for (let i = 0; i < buf.length; i++) {
     const v = (buf[i] - 128) / 128;
@@ -653,183 +750,470 @@ function paintVU() {
   }
   const rms = Math.sqrt(sum / buf.length);
   const pct = Math.min(100, Math.round(rms * 280));
-  const fill = document.getElementById('vuFill');
+  const fill = document.getElementById(fillId);
   if (fill) {
     fill.style.width = pct + '%';
     fill.style.background = pct > 75 ? '#e07070' : (pct > 35 ? '#7fdb9b' : '#6a8aa8');
   }
-  vuRafHandle = requestAnimationFrame(paintVU);
+  vcMedia.vuRaf = requestAnimationFrame(() => paintVU(fillId));
 }
 
-async function toggleRecord(idx) {
-  if (recordingIdx === idx) {
-    stopRecording(false);
+async function vcToggleRecord() {
+  if (vcMedia.recording) {
+    vcStopRecorder(false);
     return;
-  }
-  if (recordingIdx >= 0) {
-    stopRecording(true);
   }
   try {
     await ensureMic();
   } catch (e) {
-    document.getElementById('step2Err').textContent = String(e);
+    document.getElementById('vcErr').textContent = String(e);
     return;
   }
-  document.getElementById('step2Err').textContent = '';
-  document.getElementById('vuRow').style.display = '';
-  recChunks = [];
+  document.getElementById('vcErr').textContent = '';
+  vcMedia.chunks = [];
   let mime = 'audio/webm;codecs=opus';
   if (!MediaRecorder.isTypeSupported(mime)) mime = 'audio/webm';
   if (!MediaRecorder.isTypeSupported(mime)) mime = '';
   try {
-    mediaRecorder = new MediaRecorder(mediaStream, mime ? {mimeType: mime} : {});
+    vcMedia.recorder = new MediaRecorder(vcMedia.stream, mime ? {mimeType: mime} : {});
   } catch (e) {
-    document.getElementById('step2Err').textContent = 'MediaRecorder init failed: ' + e;
+    document.getElementById('vcErr').textContent = 'MediaRecorder init failed: ' + e;
     return;
   }
-  recordingIdx = idx;
-  recStartTs = Date.now();
-  const card = document.querySelector('[data-script-idx="' + idx + '"]');
-  card.querySelector('.rec-btn').classList.remove('btn-warning');
-  card.querySelector('.rec-btn').classList.add('btn-danger');
-  card.querySelector('.rec-btn').textContent = '■ Stop';
-  card.querySelector('.recording-status').textContent = 'recording…';
-  card.querySelector('.recording-status').classList.remove('text-success', 'text-danger');
-  paintVU();
-  if (recTimerHandle) clearInterval(recTimerHandle);
-  recTimerHandle = setInterval(() => {
-    const secs = (Date.now() - recStartTs) / 1000;
-    document.getElementById('recTimer').textContent = secs.toFixed(1) + 's';
+  vcMedia.recording = true;
+  vcMedia.startTs = Date.now();
+  document.getElementById('vcMic').classList.add('recording');
+  document.getElementById('vcMic').textContent = '■';
+  document.getElementById('vcStatus').textContent = 'recording…';
+  paintVU('vcVuFill');
+  if (vcMedia.timer) clearInterval(vcMedia.timer);
+  vcMedia.timer = setInterval(() => {
+    const secs = (Date.now() - vcMedia.startTs) / 1000;
+    document.getElementById('vcTimer').textContent = secs.toFixed(1) + 's';
   }, 100);
-  mediaRecorder.ondataavailable = (ev) => {
-    if (ev.data && ev.data.size > 0) recChunks.push(ev.data);
+  vcMedia.recorder.ondataavailable = (ev) => {
+    if (ev.data && ev.data.size > 0) vcMedia.chunks.push(ev.data);
   };
-  mediaRecorder.onstop = () => uploadRecording(idx);
-  mediaRecorder.start();
+  vcMedia.recorder.onstop = () => vcUploadCurrent();
+  vcMedia.recorder.start();
 }
 
-function stopRecording(silent) {
-  if (mediaRecorder && mediaRecorder.state === 'recording') {
-    try { mediaRecorder.stop(); } catch (e) {}
+function vcStopRecorder(silent) {
+  if (vcMedia.recorder && vcMedia.recorder.state === 'recording') {
+    try { vcMedia.recorder.stop(); } catch(e) {}
   }
-  if (recTimerHandle) { clearInterval(recTimerHandle); recTimerHandle = null; }
-  if (vuRafHandle) { cancelAnimationFrame(vuRafHandle); vuRafHandle = null; }
+  vcMedia.recording = false;
+  if (vcMedia.timer) { clearInterval(vcMedia.timer); vcMedia.timer = null; }
+  if (vcMedia.vuRaf) { cancelAnimationFrame(vcMedia.vuRaf); vcMedia.vuRaf = null; }
+  document.getElementById('vcMic').classList.remove('recording');
+  document.getElementById('vcMic').textContent = '●';
 }
 
-async function uploadRecording(idx) {
-  const card = document.querySelector('[data-script-idx="' + idx + '"]');
-  const blob = new Blob(recChunks, {type: mediaRecorder.mimeType || 'audio/webm'});
-  const durS = (Date.now() - recStartTs) / 1000;
-  recordingIdx = -1;
-  const recBtn = card.querySelector('.rec-btn');
-  recBtn.classList.remove('btn-danger');
-  recBtn.classList.add('btn-warning');
-  recBtn.textContent = '● Record';
-  card.querySelector('.recording-status').textContent =
-    'uploading (' + durS.toFixed(1) + 's)…';
+async function vcUploadCurrent() {
+  if (!vcState) return;
+  const idx = vcState.idx;
+  const blob = new Blob(vcMedia.chunks, {type: vcMedia.recorder.mimeType || 'audio/webm'});
+  const durS = (Date.now() - vcMedia.startTs) / 1000;
+  const playback = document.getElementById('vcPlayback');
+  playback.src = URL.createObjectURL(blob);
+  playback.style.display = '';
+  document.getElementById('vcTimer').textContent = durS.toFixed(1) + 's';
 
-  const audioEl = card.querySelector('.playback');
-  audioEl.src = URL.createObjectURL(blob);
-  audioEl.style.display = '';
-
-  if (durS < {{ min_s|int }}) {
-    card.querySelector('.recording-status').textContent =
-      'too short (' + durS.toFixed(1) + 's, need >= {{ min_s|int }}s) — retry';
-    card.querySelector('.recording-status').classList.add('text-danger');
+  if (durS < UC_MIN_S) {
+    document.getElementById('vcStatus').textContent =
+      'too short (' + durS.toFixed(1) + 's, need ≥ ' + UC_MIN_S + 's) — re-record';
     return;
   }
-  if (durS > {{ max_s|int }}) {
-    card.querySelector('.recording-status').textContent =
-      'too long (' + durS.toFixed(1) + 's, max {{ max_s|int }}s) — retry';
-    card.querySelector('.recording-status').classList.add('text-danger');
+  if (durS > UC_MAX_S) {
+    document.getElementById('vcStatus').textContent =
+      'too long (' + durS.toFixed(1) + 's, max ' + UC_MAX_S + 's) — re-record';
     return;
   }
 
+  document.getElementById('vcStatus').textContent = 'uploading (' + durS.toFixed(1) + 's)…';
   const fd = new FormData();
-  const ext = (mediaRecorder.mimeType || '').indexOf('ogg') >= 0 ? 'ogg' : 'webm';
+  const ext = (vcMedia.recorder.mimeType || '').indexOf('ogg') >= 0 ? 'ogg' : 'webm';
   fd.append('audio', blob, 'sample.' + ext);
   try {
     const r = await fetch(
-      '/advanced/user-config/' + enrollState.enrollment_id + '/voice-sample',
+      '/advanced/user-config/' + vcState.enrollment_id + '/voice-sample',
       {method: 'POST', body: fd},
     );
     if (!r.ok) {
       const txt = await r.text();
-      card.querySelector('.recording-status').textContent = 'upload failed: ' + txt;
-      card.querySelector('.recording-status').classList.add('text-danger');
+      document.getElementById('vcStatus').textContent = 'upload failed: ' + txt;
       return;
     }
     const j = await r.json();
-    sampleCount = j.sample_count;
-    card.querySelector('.recording-status').textContent =
-      'saved · ' + j.duration_s.toFixed(1) + 's (' + sampleCount + ' total)';
-    card.querySelector('.recording-status').classList.add('text-success');
+    vcState.recordings[idx] = {ok: true, dur: j.duration_s};
+    document.getElementById('vcStatus').textContent = 'saved · ' + j.duration_s.toFixed(1) + 's';
+    document.getElementById('vcRerec').style.display = '';
+    renderDots('vcDots', 3, vcState.idx, (i) =>
+      vcState.recordings[i] ? 'filled' : 'empty');
   } catch (e) {
-    card.querySelector('.recording-status').textContent = 'upload error: ' + e;
-    card.querySelector('.recording-status').classList.add('text-danger');
+    document.getElementById('vcStatus').textContent = 'upload error: ' + e;
   }
 }
 
-function step2Next() {
-  if (wizardMode === 'full' && sampleCount < 1) {
-    document.getElementById('step2Err').textContent =
-      'Record at least one valid sample before continuing (three is best).';
+async function vcFinish() {
+  if (!vcState) return;
+  const saved = vcState.recordings.filter(r => r).length;
+  if (saved < 1) {
+    document.getElementById('vcErr').textContent = 'Record at least one valid sample before finishing.';
     return;
   }
-  document.getElementById('step2Err').textContent = '';
-  if (mediaStream) {
-    mediaStream.getTracks().forEach(t => t.stop());
-    mediaStream = null;
-    analyserNode = null;
-  }
-  if (wizardMode === 'voice') {
-    finish();
-    return;
-  }
-  showStep(3);
-}
-
-async function finish() {
-  const answers = {};
-  document.querySelectorAll('.interview-field').forEach(el => {
-    const v = (el.value || '').trim();
-    if (v) answers[el.dataset.key] = v;
-  });
-  document.getElementById('step3Err').textContent = '';
+  document.getElementById('vcErr').textContent = '';
+  document.getElementById('vcStatus').textContent = 'embedding voiceprint…';
   try {
-    const r1 = await fetch(
-      '/advanced/user-config/' + enrollState.enrollment_id + '/interview',
-      {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(answers)},
-    );
-    if (!r1.ok) throw new Error('interview save failed: ' + await r1.text());
-    const result = document.getElementById('wizardResult');
-    result.innerHTML = '<div class="text-secondary">Embedding voiceprint — this can take a few seconds…</div>';
-    const r2 = await fetch(
-      '/advanced/user-config/' + enrollState.enrollment_id + '/complete',
+    const r = await fetch(
+      '/advanced/user-config/' + vcState.enrollment_id + '/complete',
       {method: 'POST'},
     );
-    if (!r2.ok) throw new Error('complete failed: ' + await r2.text());
-    const j = await r2.json();
-    result.innerHTML =
-      '<div class="text-success fw-bold">Enrolled ' + j.name + '.</div>' +
-      '<div class="small text-secondary">' +
-        'Voiceprint: ' + j.voiceprint_path + ' shape=' + JSON.stringify(j.voiceprint_shape) + '<br>' +
-        'Samples: ' + j.sample_count + '<br>' +
-        'Memory file: ' + j.memory_path +
-      '</div>' +
-      '<button class="btn btn-sm btn-outline-warning mt-2" onclick="window.location.reload()">Reload</button>';
+    if (!r.ok) throw new Error(await r.text());
+    const j = await r.json();
+    vcStopMic();
+    showBackdrop('vcBackdrop', false);
+    ucToast(saved + ' sample' + (saved===1?'':'s') + ' saved, voiceprint averaged.');
+    vcState = null;
+    setTimeout(() => window.location.reload(), 800);
   } catch (e) {
-    document.getElementById('step3Err').textContent = String(e);
+    document.getElementById('vcErr').textContent = 'Finish failed: ' + e;
   }
 }
 
+// ═══════════════════════ MEMORY MODAL ═══════════════════════
+async function openMemory(name) {
+  document.getElementById('memTitle').textContent = 'Memory file: /opt/benson/memory/' + name + '.md';
+  document.getElementById('memBody').textContent = 'loading…';
+  showBackdrop('memBackdrop', true);
+  try {
+    const r = await fetch('/advanced/user-config/' + name + '/details');
+    if (!r.ok) throw new Error('details ' + r.status);
+    const d = await r.json();
+    document.getElementById('memBody').textContent = d.memory_preview || '(empty)';
+  } catch (e) {
+    document.getElementById('memBody').textContent = '(failed to load: ' + e + ')';
+  }
+}
+
+function closeMemory() { showBackdrop('memBackdrop', false); }
+function memBackdropClick(ev) {
+  if (ev.target === document.getElementById('memBackdrop')) closeMemory();
+}
+
+// ═══════════════════════ WIZARD MODAL (Add Family Member) ═══════════════════════
+let wzState = null;
+// { step: 1|2|3, name, role, enrollment_id, vcIdx, recordings[3], ivIdx, edits{} }
+
+function openWizard() {
+  wzState = {
+    step: 1, name: '', role: 'parent', enrollment_id: null,
+    vcIdx: 0, recordings: [null, null, null],
+    ivIdx: 0, edits: {},
+  };
+  document.getElementById('wzTitle').textContent = 'Add Family Member';
+  document.getElementById('wzName').value = '';
+  document.getElementById('wzName').disabled = false;
+  document.getElementById('wzRole').value = 'parent';
+  document.getElementById('wzPhoto').value = '';
+  document.getElementById('wzStep1Err').textContent = '';
+  document.getElementById('wzStep2Err').textContent = '';
+  document.getElementById('wzStep3Err').textContent = '';
+  document.getElementById('wzResult').innerHTML = '';
+  document.getElementById('wzDots')._jump = null; // no jumping in wizard
+  wzRender();
+  showBackdrop('wzBackdrop', true);
+  setTimeout(() => document.getElementById('wzName').focus(), 60);
+}
+
+function closeWizard() {
+  if (wzState && wzState.enrollment_id) {
+    if (!confirm('Cancel this enrollment? Any uploaded samples will be discarded server-side on restart.')) return;
+  }
+  vcStopRecorder(true);
+  vcStopMic();
+  showBackdrop('wzBackdrop', false);
+  wzState = null;
+}
+
+function wzBackdropClick(ev) {
+  if (ev.target === document.getElementById('wzBackdrop')) closeWizard();
+}
+
+function wzRender() {
+  document.getElementById('wzStep1').style.display = wzState.step === 1 ? '' : 'none';
+  document.getElementById('wzStep2').style.display = wzState.step === 2 ? '' : 'none';
+  document.getElementById('wzStep3').style.display = wzState.step === 3 ? '' : 'none';
+  renderDots('wzDots', 3, wzState.step - 1, (i) => {
+    if (i < wzState.step - 1) return 'filled';
+    return 'empty';
+  });
+  document.getElementById('wzPrevBtn').disabled = (wzState.step === 1);
+  const skipBtn = document.getElementById('wzSkipBtn');
+  const nextBtn = document.getElementById('wzNextBtn');
+  if (wzState.step === 1) {
+    skipBtn.style.display = 'none';
+    nextBtn.textContent = 'Next →';
+    document.getElementById('wzCounter').textContent = 'Step 1 / 3 · Identity';
+  } else if (wzState.step === 2) {
+    skipBtn.style.display = '';
+    nextBtn.textContent = (wzState.vcIdx === 2) ? 'Continue to Interview →' : 'Save & Next →';
+    document.getElementById('wzCounter').textContent =
+      'Step 2 / 3 · Voice ' + (wzState.vcIdx + 1) + ' of 3';
+    document.getElementById('wzScript').textContent = UC_SCRIPTS[wzState.vcIdx];
+    const rec = wzState.recordings[wzState.vcIdx];
+    document.getElementById('wzVcStatus').textContent = rec
+      ? ('saved · ' + rec.dur.toFixed(1) + 's')
+      : 'not recorded';
+    document.getElementById('wzRerec').style.display = rec ? '' : 'none';
+    document.getElementById('wzPlayback').style.display = 'none';
+    document.getElementById('wzVuFill').style.width = '0%';
+    document.getElementById('wzTimer').textContent = '0.0s';
+    document.getElementById('wzMic').classList.remove('recording');
+    document.getElementById('wzMic').textContent = '●';
+  } else {
+    skipBtn.style.display = '';
+    const isLast = wzState.ivIdx === UC_QUESTIONS.length - 1;
+    nextBtn.textContent = isLast ? 'Finish' : 'Save & Next →';
+    document.getElementById('wzCounter').textContent =
+      'Step 3 / 3 · Interview ' + (wzState.ivIdx + 1) + ' / ' + UC_QUESTIONS.length;
+    const q = UC_QUESTIONS[wzState.ivIdx];
+    document.getElementById('wzQuestion').textContent = q.q;
+    document.getElementById('wzAnswer').value = wzState.edits[q.key] || '';
+  }
+}
+
+async function wzNext() {
+  if (wzState.step === 1) {
+    const name = (document.getElementById('wzName').value || '').trim().toLowerCase();
+    const role = document.getElementById('wzRole').value;
+    if (!name) { document.getElementById('wzStep1Err').textContent = 'Name is required.'; return; }
+    if (!/^[a-z][a-z0-9_-]{0,30}$/.test(name)) {
+      document.getElementById('wzStep1Err').textContent = 'Name must start with a letter, lowercase, no spaces.';
+      return;
+    }
+    document.getElementById('wzStep1Err').textContent = '';
+    try {
+      const r = await fetch('/advanced/user-config/start', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({name, role}),
+      });
+      if (!r.ok) throw new Error(await r.text());
+      const j = await r.json();
+      wzState.name = name; wzState.role = role; wzState.enrollment_id = j.enrollment_id;
+    } catch (e) {
+      document.getElementById('wzStep1Err').textContent = 'Start failed: ' + e;
+      return;
+    }
+    const photoFile = document.getElementById('wzPhoto').files[0];
+    if (photoFile) {
+      try {
+        const fd = new FormData();
+        fd.append('photo', photoFile);
+        await fetch('/advanced/user-config/' + wzState.enrollment_id + '/photo', {method: 'POST', body: fd});
+      } catch (e) { console.warn('photo upload failed:', e); }
+    }
+    wzState.step = 2;
+    wzRender();
+  } else if (wzState.step === 2) {
+    wzStopRecorder(true);
+    if (wzState.vcIdx < 2) {
+      wzState.vcIdx++;
+      wzRender();
+    } else {
+      // Move to interview step
+      vcStopMic();
+      wzState.step = 3;
+      wzRender();
+    }
+  } else if (wzState.step === 3) {
+    // Capture current edit
+    const q = UC_QUESTIONS[wzState.ivIdx];
+    const v = (document.getElementById('wzAnswer').value || '').trim();
+    if (v) wzState.edits[q.key] = v; else delete wzState.edits[q.key];
+    if (wzState.ivIdx < UC_QUESTIONS.length - 1) {
+      wzState.ivIdx++;
+      wzRender();
+    } else {
+      await wzFinish();
+    }
+  }
+}
+
+function wzPrev() {
+  if (wzState.step === 1) return;
+  if (wzState.step === 2) {
+    if (wzState.vcIdx > 0) {
+      wzStopRecorder(true);
+      wzState.vcIdx--;
+      wzRender();
+    } else {
+      wzState.step = 1;
+      wzRender();
+    }
+  } else if (wzState.step === 3) {
+    if (wzState.ivIdx > 0) {
+      wzState.ivIdx--;
+      wzRender();
+    } else {
+      wzState.step = 2;
+      wzState.vcIdx = 2;
+      wzRender();
+    }
+  }
+}
+
+function wzSkip() {
+  if (wzState.step === 2) {
+    wzStopRecorder(true);
+    if (wzState.vcIdx < 2) {
+      wzState.vcIdx++;
+      wzRender();
+    } else {
+      vcStopMic();
+      wzState.step = 3;
+      wzRender();
+    }
+  } else if (wzState.step === 3) {
+    delete wzState.edits[UC_QUESTIONS[wzState.ivIdx].key];
+    if (wzState.ivIdx < UC_QUESTIONS.length - 1) {
+      wzState.ivIdx++;
+      wzRender();
+    } else {
+      wzFinish();
+    }
+  }
+}
+
+// Wizard reuses the vcMedia globals + ensureMic for its recorder.
+async function wzToggleRecord() {
+  if (vcMedia.recording) { wzStopRecorder(false); return; }
+  try { await ensureMic(); }
+  catch (e) { document.getElementById('wzStep2Err').textContent = String(e); return; }
+  document.getElementById('wzStep2Err').textContent = '';
+  vcMedia.chunks = [];
+  let mime = 'audio/webm;codecs=opus';
+  if (!MediaRecorder.isTypeSupported(mime)) mime = 'audio/webm';
+  if (!MediaRecorder.isTypeSupported(mime)) mime = '';
+  try {
+    vcMedia.recorder = new MediaRecorder(vcMedia.stream, mime ? {mimeType: mime} : {});
+  } catch (e) {
+    document.getElementById('wzStep2Err').textContent = 'MediaRecorder init failed: ' + e;
+    return;
+  }
+  vcMedia.recording = true;
+  vcMedia.startTs = Date.now();
+  document.getElementById('wzMic').classList.add('recording');
+  document.getElementById('wzMic').textContent = '■';
+  document.getElementById('wzVcStatus').textContent = 'recording…';
+  paintVU('wzVuFill');
+  if (vcMedia.timer) clearInterval(vcMedia.timer);
+  vcMedia.timer = setInterval(() => {
+    const secs = (Date.now() - vcMedia.startTs) / 1000;
+    document.getElementById('wzTimer').textContent = secs.toFixed(1) + 's';
+  }, 100);
+  vcMedia.recorder.ondataavailable = (ev) => {
+    if (ev.data && ev.data.size > 0) vcMedia.chunks.push(ev.data);
+  };
+  vcMedia.recorder.onstop = () => wzUploadCurrent();
+  vcMedia.recorder.start();
+}
+
+function wzStopRecorder(silent) {
+  if (vcMedia.recorder && vcMedia.recorder.state === 'recording') {
+    try { vcMedia.recorder.stop(); } catch(e) {}
+  }
+  vcMedia.recording = false;
+  if (vcMedia.timer) { clearInterval(vcMedia.timer); vcMedia.timer = null; }
+  if (vcMedia.vuRaf) { cancelAnimationFrame(vcMedia.vuRaf); vcMedia.vuRaf = null; }
+  document.getElementById('wzMic').classList.remove('recording');
+  document.getElementById('wzMic').textContent = '●';
+}
+
+function wzReRecord() {
+  wzState.recordings[wzState.vcIdx] = null;
+  wzRender();
+}
+
+async function wzUploadCurrent() {
+  if (!wzState) return;
+  const idx = wzState.vcIdx;
+  const blob = new Blob(vcMedia.chunks, {type: vcMedia.recorder.mimeType || 'audio/webm'});
+  const durS = (Date.now() - vcMedia.startTs) / 1000;
+  const playback = document.getElementById('wzPlayback');
+  playback.src = URL.createObjectURL(blob);
+  playback.style.display = '';
+  document.getElementById('wzTimer').textContent = durS.toFixed(1) + 's';
+
+  if (durS < UC_MIN_S) {
+    document.getElementById('wzVcStatus').textContent =
+      'too short (' + durS.toFixed(1) + 's, need ≥ ' + UC_MIN_S + 's) — re-record';
+    return;
+  }
+  if (durS > UC_MAX_S) {
+    document.getElementById('wzVcStatus').textContent =
+      'too long (' + durS.toFixed(1) + 's, max ' + UC_MAX_S + 's) — re-record';
+    return;
+  }
+
+  document.getElementById('wzVcStatus').textContent = 'uploading…';
+  const fd = new FormData();
+  const ext = (vcMedia.recorder.mimeType || '').indexOf('ogg') >= 0 ? 'ogg' : 'webm';
+  fd.append('audio', blob, 'sample.' + ext);
+  try {
+    const r = await fetch('/advanced/user-config/' + wzState.enrollment_id + '/voice-sample',
+      {method:'POST', body: fd});
+    if (!r.ok) {
+      const txt = await r.text();
+      document.getElementById('wzVcStatus').textContent = 'upload failed: ' + txt;
+      return;
+    }
+    const j = await r.json();
+    wzState.recordings[idx] = {ok: true, dur: j.duration_s};
+    document.getElementById('wzVcStatus').textContent = 'saved · ' + j.duration_s.toFixed(1) + 's';
+    document.getElementById('wzRerec').style.display = '';
+  } catch (e) {
+    document.getElementById('wzVcStatus').textContent = 'upload error: ' + e;
+  }
+}
+
+async function wzFinish() {
+  if (!wzState) return;
+  // Capture last interview answer
+  const q = UC_QUESTIONS[wzState.ivIdx];
+  const v = (document.getElementById('wzAnswer').value || '').trim();
+  if (v) wzState.edits[q.key] = v;
+  document.getElementById('wzStep3Err').textContent = '';
+  try {
+    const r1 = await fetch('/advanced/user-config/' + wzState.enrollment_id + '/interview', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(wzState.edits || {}),
+    });
+    if (!r1.ok) throw new Error('interview save failed: ' + await r1.text());
+    document.getElementById('wzResult').innerHTML = '<div class="text-secondary">Embedding voiceprint — a few seconds…</div>';
+    const r2 = await fetch('/advanced/user-config/' + wzState.enrollment_id + '/complete', {method:'POST'});
+    if (!r2.ok) throw new Error('complete failed: ' + await r2.text());
+    const j = await r2.json();
+    vcStopMic();
+    document.getElementById('wzResult').innerHTML =
+      '<div class="text-success fw-bold">Enrolled ' + ucEsc(j.name) + '.</div>' +
+      '<div class="small text-secondary">Samples: ' + j.sample_count + ' · memory: ' + ucEsc(j.memory_path) + '</div>';
+    ucToast('Enrolled ' + j.name + '.');
+    wzState = null;
+    setTimeout(() => { showBackdrop('wzBackdrop', false); window.location.reload(); }, 1000);
+  } catch (e) {
+    document.getElementById('wzStep3Err').textContent = String(e);
+  }
+}
+
+// ═══════════════════════ DELETE ═══════════════════════
 async function deleteUser(name) {
   if (!confirm('Delete voiceprint + raw samples for "' + name + '"? The memory file (' + name + '.md) is left untouched.')) return;
   try {
     const r = await fetch('/advanced/user-config/' + name + '/delete', {method: 'POST'});
     if (!r.ok) throw new Error(await r.text());
     window.location.reload();
-  } catch (e) { alert('Delete failed: ' + e); }
+  } catch (e) { ucToast('Delete failed: ' + e, true); }
 }
 </script>
 {% endblock %}
