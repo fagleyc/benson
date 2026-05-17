@@ -1,5 +1,9 @@
 packages:
-  respeaker-satellite: github://formatBCE/Respeaker-Lite-ESPHome-integration/config/common/respeaker-satellite-base.yaml@main
+  # Forked from formatBCE's respeaker-satellite-base.yaml — we added the
+  # hey_benson model entry directly to the models: list so ESPHome's
+  # !extend limitation on nested singleton lists is sidestepped entirely.
+  # External_components inside the base still pull from formatBCE upstream.
+  respeaker-satellite: github://fagleyc/benson/microwakeword/respeaker-satellite-base.yaml@main
 
 esphome:
   name: respeaker-kitchen
@@ -18,20 +22,5 @@ api:
   encryption:
     key: !secret api_encryption_key
 
-# Custom "Hey Benson" wake-word model.
-#
-# ESPHome fetches the .json manifest at COMPILE TIME (and the .tflite it
-# references) and bakes the bytes into the firmware image. So the URL
-# below must be reachable from the build machine AND Python's `requests`
-# library must trust the TLS chain. Plain http:// is rejected by the
-# validator; HTTPS with a self-signed cert fails on the Python side
-# unless the CA is installed into certifi's bundle. Public GitHub raw
-# URLs avoid both problems.
-#
-# `models: !extend` APPENDS this entry to formatBCE's base list
-# (okay_nabu, kenobi, hey_jarvis, hey_mycroft, stop) — block-level keys
-# inherit, ONLY the new model is added.
-micro_wake_word:
-  models: !extend
-    - model: https://raw.githubusercontent.com/fagleyc/benson/main/microwakeword/models/hey_benson.json
-      id: hey_benson
+# Hey Benson lives in the forked base YAML (models: list, line ~1376),
+# so no override needed here — clean inheritance from the package import.
