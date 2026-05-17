@@ -1,0 +1,462 @@
+{% extends "layout.html" %}
+{% block title %}Family — Fagley House Hub{% endblock %}
+{% block content %}
+<a href="/advanced" class="text-secondary">← Advanced</a>
+<h2 class="mt-3 mb-1">Family</h2>
+<p class="text-secondary small mb-3">
+  Enrolled household members. Each card links to a voiceprint Benson uses
+  to recognize who's talking, plus an interview that seeds the person's
+  memory file. Re-enrollment appends — it never overwrites.
+</p>
+
+<div class="row g-3 mb-4" id="enrolledGrid">
+  {% for u in enrolled %}
+  <div class="col-12 col-md-6 col-lg-4">
+    <div class="card bg-dark border-secondary h-100">
+      <div class="card-body d-flex gap-3 align-items-start">
+        {% if u.photo %}
+          <img src="{{ u.photo }}" alt="" style="width:64px;height:64px;border-radius:50%;object-fit:cover;border:1px solid #555">
+        {% else %}
+          <div style="width:64px;height:64px;border-radius:50%;background:#2a3742;display:flex;align-items:center;justify-content:center;font-size:1.6rem;color:#f39c12">
+            {{ (u.name or '?')[0]|upper }}
+          </div>
+        {% endif %}
+        <div class="flex-grow-1">
+          <h5 class="card-title text-warning mb-1">{{ u.name }}</h5>
+          <div class="small text-secondary">
+            {{ u.role or 'unknown role' }} · {{ u.sample_count }} sample{{ '' if u.sample_count == 1 else 's' }}
+          </div>
+          {% if u.last_updated_at %}
+            <div class="small text-secondary">updated {{ u.last_updated_at[:10] }}</div>
+          {% endif %}
+          <div class="mt-2 d-flex gap-2">
+            <button class="btn btn-sm btn-outline-warning"
+                    onclick="startWizard({name: '{{ u.name }}', role: '{{ u.role or 'guest' }}', reenroll: true})">
+              Re-enroll
+            </button>
+            <button class="btn btn-sm btn-outline-danger"
+                    onclick="deleteUser('{{ u.name }}')">
+              Delete
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+
+  <div class="col-12 col-md-6 col-lg-4">
+    <div class="card bg-dark border-secondary h-100 recipe-card">
+      <div class="card-body d-flex flex-column align-items-center justify-content-center" style="min-height:160px">
+        <button class="btn btn-warning btn-lg" onclick="startWizard()">+ Add User</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ─── Wizard ──────────────────────────────────────────────────────── -->
+<div id="wizard" class="card bg-dark border-warning p-3 mb-4" style="display:none">
+  <div class="d-flex justify-content-between align-items-baseline mb-2">
+    <h4 class="mb-0 text-warning">Enrollment</h4>
+    <button class="btn btn-sm btn-outline-secondary" onclick="cancelWizard()">Close</button>
+  </div>
+
+  <div class="d-flex gap-3 mb-3 small">
+    <span id="stepInd1" class="text-warning fw-bold">1. Identity</span>
+    <span class="text-secondary">›</span>
+    <span id="stepInd2" class="text-secondary">2. Voice</span>
+    <span class="text-secondary">›</span>
+    <span id="stepInd3" class="text-secondary">3. Interview</span>
+  </div>
+
+  <!-- Step 1: Identity -->
+  <div id="step1">
+    <div class="mb-2">
+      <label class="small text-secondary">Name (lowercase, used as the filename — e.g. casey, sherry, guest_dave)</label>
+      <input id="fldName" class="form-control bg-dark text-light border-secondary"
+             placeholder="casey">
+    </div>
+    <div class="mb-2">
+      <label class="small text-secondary">Role</label>
+      <select id="fldRole" class="form-select bg-dark text-light border-secondary">
+        <option value="parent">parent</option>
+        <option value="teen">teen</option>
+        <option value="child">child</option>
+        <option value="guest">guest</option>
+      </select>
+    </div>
+    <div class="mb-2">
+      <label class="small text-secondary">Photo (optional)</label>
+      <input id="fldPhoto" type="file" accept="image/*" class="form-control bg-dark text-light border-secondary">
+    </div>
+    <div id="step1Err" class="small text-danger mb-2"></div>
+    <div class="d-flex gap-2">
+      <button class="btn btn-warning" onclick="step1Next()">Next →</button>
+    </div>
+  </div>
+
+  <!-- Step 2: Voice samples -->
+  <div id="step2" style="display:none">
+    <p class="small text-secondary">
+      Read three short scripts aloud at normal volume — about 15 seconds each.
+      Aim for {{ min_s|int }}–{{ max_s|int }} seconds per sample.
+    </p>
+    <div id="vuRow" class="d-flex gap-2 align-items-center mb-2" style="display:none">
+      <span class="small text-secondary" style="min-width:60px">level</span>
+      <div style="flex:1;height:12px;background:#1a1f24;border-radius:6px;overflow:hidden">
+        <div id="vuFill" style="height:100%;width:0%;background:#7fdb9b;transition:width .05s"></div>
+      </div>
+      <span id="recTimer" class="small text-secondary" style="min-width:60px;text-align:right">0.0s</span>
+    </div>
+    {% for s in scripts %}
+    <div class="card bg-dark border-secondary p-2 mb-2" data-script-idx="{{ loop.index0 }}">
+      <div class="d-flex justify-content-between align-items-baseline">
+        <strong>Script {{ loop.index }}</strong>
+        <span class="small recording-status text-secondary">not recorded</span>
+      </div>
+      <p class="mb-2 small" style="line-height:1.4">{{ s }}</p>
+      <div class="d-flex gap-2">
+        <button class="btn btn-sm btn-warning rec-btn" onclick="toggleRecord({{ loop.index0 }})">● Record</button>
+        <audio class="playback" controls style="display:none;height:32px"></audio>
+      </div>
+    </div>
+    {% endfor %}
+    <div id="step2Err" class="small text-danger mb-2"></div>
+    <div class="d-flex gap-2">
+      <button class="btn btn-outline-secondary" onclick="showStep(1)">← Back</button>
+      <button class="btn btn-warning" onclick="step2Next()">Next →</button>
+    </div>
+  </div>
+
+  <!-- Step 3: Interview -->
+  <div id="step3" style="display:none">
+    <p class="small text-secondary">
+      These answers seed the person's memory file. Skip anything you don't
+      want to share.
+    </p>
+    {% for q in questions %}
+      <div class="mb-2">
+        <label class="small text-secondary">{{ q.q }}</label>
+        <textarea class="form-control bg-dark text-light border-secondary interview-field"
+                  data-key="{{ q.key }}" rows="2"></textarea>
+      </div>
+    {% endfor %}
+    <div id="step3Err" class="small text-danger mb-2"></div>
+    <div class="d-flex gap-2">
+      <button class="btn btn-outline-secondary" onclick="showStep(2)">← Back</button>
+      <button class="btn btn-success" onclick="finish()">Finish Enrollment</button>
+    </div>
+  </div>
+
+  <div id="wizardResult" class="mt-3 small"></div>
+</div>
+
+<script>
+let enrollState = null;
+let mediaStream = null;
+let mediaRecorder = null;
+let recChunks = [];
+let recStartTs = 0;
+let recTimerHandle = null;
+let recordingIdx = -1;
+let analyserNode = null;
+let vuRafHandle = null;
+let sampleCount = 0;
+
+function showStep(n) {
+  document.getElementById('step1').style.display = n === 1 ? '' : 'none';
+  document.getElementById('step2').style.display = n === 2 ? '' : 'none';
+  document.getElementById('step3').style.display = n === 3 ? '' : 'none';
+  ['stepInd1','stepInd2','stepInd3'].forEach((id, i) => {
+    const el = document.getElementById(id);
+    el.classList.toggle('text-warning', i === n - 1);
+    el.classList.toggle('fw-bold', i === n - 1);
+    el.classList.toggle('text-secondary', i !== n - 1);
+  });
+}
+
+function startWizard(opts) {
+  enrollState = null;
+  sampleCount = 0;
+  document.getElementById('wizardResult').innerHTML = '';
+  document.getElementById('step1Err').textContent = '';
+  document.getElementById('step2Err').textContent = '';
+  document.getElementById('step3Err').textContent = '';
+  // Reset record cards
+  document.querySelectorAll('[data-script-idx]').forEach(card => {
+    card.querySelector('.recording-status').textContent = 'not recorded';
+    card.querySelector('.recording-status').classList.remove('text-success');
+    card.querySelector('.playback').style.display = 'none';
+    card.querySelector('.rec-btn').textContent = '● Record';
+    card.querySelector('.rec-btn').classList.remove('btn-danger');
+    card.querySelector('.rec-btn').classList.add('btn-warning');
+  });
+  // Reset interview
+  document.querySelectorAll('.interview-field').forEach(f => f.value = '');
+  // Pre-fill if re-enrolling
+  if (opts && opts.name) {
+    document.getElementById('fldName').value = opts.name;
+    document.getElementById('fldName').disabled = true;
+    document.getElementById('fldRole').value = opts.role || 'guest';
+  } else {
+    document.getElementById('fldName').value = '';
+    document.getElementById('fldName').disabled = false;
+    document.getElementById('fldRole').value = 'guest';
+  }
+  document.getElementById('fldPhoto').value = '';
+  document.getElementById('wizard').style.display = '';
+  showStep(1);
+  document.getElementById('wizard').scrollIntoView({behavior:'smooth', block:'start'});
+}
+
+function cancelWizard() {
+  stopRecording(true);
+  if (mediaStream) {
+    mediaStream.getTracks().forEach(t => t.stop());
+    mediaStream = null;
+  }
+  document.getElementById('wizard').style.display = 'none';
+  enrollState = null;
+}
+
+async function step1Next() {
+  const name = (document.getElementById('fldName').value || '').trim().toLowerCase();
+  const role = document.getElementById('fldRole').value;
+  if (!name) {
+    document.getElementById('step1Err').textContent = 'Name is required.';
+    return;
+  }
+  if (!/^[a-z][a-z0-9_-]{0,30}$/.test(name)) {
+    document.getElementById('step1Err').textContent = 'Name must start with a letter, lowercase, no spaces.';
+    return;
+  }
+  document.getElementById('step1Err').textContent = '';
+  try {
+    const r = await fetch('/advanced/user-config/start', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({name, role}),
+    });
+    if (!r.ok) throw new Error('start failed: ' + r.status + ' ' + await r.text());
+    enrollState = await r.json();
+  } catch (e) {
+    document.getElementById('step1Err').textContent = String(e);
+    return;
+  }
+  // Photo upload (optional, runs in parallel with stepping forward)
+  const photoFile = document.getElementById('fldPhoto').files[0];
+  if (photoFile) {
+    try {
+      const fd = new FormData();
+      fd.append('photo', photoFile);
+      await fetch('/advanced/user-config/' + enrollState.enrollment_id + '/photo', {
+        method: 'POST', body: fd,
+      });
+    } catch (e) { console.warn('photo upload failed:', e); }
+  }
+  showStep(2);
+}
+
+async function ensureMic() {
+  if (mediaStream) return mediaStream;
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    throw new Error('mic API unavailable (needs HTTPS or localhost)');
+  }
+  mediaStream = await navigator.mediaDevices.getUserMedia({audio: true});
+  // Set up analyser for VU meter
+  const ac = new (window.AudioContext || window.webkitAudioContext)();
+  const src = ac.createMediaStreamSource(mediaStream);
+  analyserNode = ac.createAnalyser();
+  analyserNode.fftSize = 512;
+  src.connect(analyserNode);
+  return mediaStream;
+}
+
+function paintVU() {
+  if (!analyserNode) return;
+  const buf = new Uint8Array(analyserNode.fftSize);
+  analyserNode.getByteTimeDomainData(buf);
+  let sum = 0;
+  for (let i = 0; i < buf.length; i++) {
+    const v = (buf[i] - 128) / 128;
+    sum += v * v;
+  }
+  const rms = Math.sqrt(sum / buf.length);
+  const pct = Math.min(100, Math.round(rms * 280));
+  const fill = document.getElementById('vuFill');
+  if (fill) {
+    fill.style.width = pct + '%';
+    fill.style.background = pct > 75 ? '#e07070' : (pct > 35 ? '#7fdb9b' : '#6a8aa8');
+  }
+  vuRafHandle = requestAnimationFrame(paintVU);
+}
+
+async function toggleRecord(idx) {
+  if (recordingIdx === idx) {
+    stopRecording(false);
+    return;
+  }
+  if (recordingIdx >= 0) {
+    stopRecording(true);
+  }
+  try {
+    await ensureMic();
+  } catch (e) {
+    document.getElementById('step2Err').textContent = String(e);
+    return;
+  }
+  document.getElementById('step2Err').textContent = '';
+  document.getElementById('vuRow').style.display = '';
+  recChunks = [];
+  let mime = 'audio/webm;codecs=opus';
+  if (!MediaRecorder.isTypeSupported(mime)) mime = 'audio/webm';
+  if (!MediaRecorder.isTypeSupported(mime)) mime = '';
+  try {
+    mediaRecorder = new MediaRecorder(mediaStream, mime ? {mimeType: mime} : {});
+  } catch (e) {
+    document.getElementById('step2Err').textContent = 'MediaRecorder init failed: ' + e;
+    return;
+  }
+  recordingIdx = idx;
+  recStartTs = Date.now();
+  const card = document.querySelector('[data-script-idx="' + idx + '"]');
+  card.querySelector('.rec-btn').classList.remove('btn-warning');
+  card.querySelector('.rec-btn').classList.add('btn-danger');
+  card.querySelector('.rec-btn').textContent = '■ Stop';
+  card.querySelector('.recording-status').textContent = 'recording…';
+  card.querySelector('.recording-status').classList.remove('text-success', 'text-danger');
+  paintVU();
+  if (recTimerHandle) clearInterval(recTimerHandle);
+  recTimerHandle = setInterval(() => {
+    const secs = (Date.now() - recStartTs) / 1000;
+    document.getElementById('recTimer').textContent = secs.toFixed(1) + 's';
+  }, 100);
+  mediaRecorder.ondataavailable = (ev) => {
+    if (ev.data && ev.data.size > 0) recChunks.push(ev.data);
+  };
+  mediaRecorder.onstop = () => uploadRecording(idx);
+  mediaRecorder.start();
+}
+
+function stopRecording(silent) {
+  if (mediaRecorder && mediaRecorder.state === 'recording') {
+    try { mediaRecorder.stop(); } catch (e) {}
+  }
+  if (recTimerHandle) { clearInterval(recTimerHandle); recTimerHandle = null; }
+  if (vuRafHandle) { cancelAnimationFrame(vuRafHandle); vuRafHandle = null; }
+}
+
+async function uploadRecording(idx) {
+  const card = document.querySelector('[data-script-idx="' + idx + '"]');
+  const blob = new Blob(recChunks, {type: mediaRecorder.mimeType || 'audio/webm'});
+  const durS = (Date.now() - recStartTs) / 1000;
+  recordingIdx = -1;
+  const recBtn = card.querySelector('.rec-btn');
+  recBtn.classList.remove('btn-danger');
+  recBtn.classList.add('btn-warning');
+  recBtn.textContent = '● Record';
+  card.querySelector('.recording-status').textContent =
+    'uploading (' + durS.toFixed(1) + 's)…';
+
+  const audioEl = card.querySelector('.playback');
+  audioEl.src = URL.createObjectURL(blob);
+  audioEl.style.display = '';
+
+  if (durS < {{ min_s|int }}) {
+    card.querySelector('.recording-status').textContent =
+      'too short (' + durS.toFixed(1) + 's, need >= {{ min_s|int }}s) — retry';
+    card.querySelector('.recording-status').classList.add('text-danger');
+    return;
+  }
+  if (durS > {{ max_s|int }}) {
+    card.querySelector('.recording-status').textContent =
+      'too long (' + durS.toFixed(1) + 's, max {{ max_s|int }}s) — retry';
+    card.querySelector('.recording-status').classList.add('text-danger');
+    return;
+  }
+
+  const fd = new FormData();
+  const ext = (mediaRecorder.mimeType || '').indexOf('ogg') >= 0 ? 'ogg' : 'webm';
+  fd.append('audio', blob, 'sample.' + ext);
+  try {
+    const r = await fetch(
+      '/advanced/user-config/' + enrollState.enrollment_id + '/voice-sample',
+      {method: 'POST', body: fd},
+    );
+    if (!r.ok) {
+      const txt = await r.text();
+      card.querySelector('.recording-status').textContent = 'upload failed: ' + txt;
+      card.querySelector('.recording-status').classList.add('text-danger');
+      return;
+    }
+    const j = await r.json();
+    sampleCount = j.sample_count;
+    card.querySelector('.recording-status').textContent =
+      'saved · ' + j.duration_s.toFixed(1) + 's (' + sampleCount + ' total)';
+    card.querySelector('.recording-status').classList.add('text-success');
+  } catch (e) {
+    card.querySelector('.recording-status').textContent = 'upload error: ' + e;
+    card.querySelector('.recording-status').classList.add('text-danger');
+  }
+}
+
+function step2Next() {
+  if (sampleCount < 1) {
+    document.getElementById('step2Err').textContent =
+      'Record at least one valid sample before continuing (three is best).';
+    return;
+  }
+  document.getElementById('step2Err').textContent = '';
+  // Release mic when leaving step 2
+  if (mediaStream) {
+    mediaStream.getTracks().forEach(t => t.stop());
+    mediaStream = null;
+    analyserNode = null;
+  }
+  showStep(3);
+}
+
+async function finish() {
+  const answers = {};
+  document.querySelectorAll('.interview-field').forEach(el => {
+    const v = (el.value || '').trim();
+    if (v) answers[el.dataset.key] = v;
+  });
+  document.getElementById('step3Err').textContent = '';
+  try {
+    const r1 = await fetch(
+      '/advanced/user-config/' + enrollState.enrollment_id + '/interview',
+      {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(answers)},
+    );
+    if (!r1.ok) throw new Error('interview save failed: ' + await r1.text());
+    const result = document.getElementById('wizardResult');
+    result.innerHTML = '<div class="text-secondary">Embedding voiceprint — this can take a few seconds…</div>';
+    const r2 = await fetch(
+      '/advanced/user-config/' + enrollState.enrollment_id + '/complete',
+      {method: 'POST'},
+    );
+    if (!r2.ok) throw new Error('complete failed: ' + await r2.text());
+    const j = await r2.json();
+    result.innerHTML =
+      '<div class="text-success fw-bold">Enrolled ' + j.name + '.</div>' +
+      '<div class="small text-secondary">' +
+        'Voiceprint: ' + j.voiceprint_path + ' shape=' + JSON.stringify(j.voiceprint_shape) + '<br>' +
+        'Samples: ' + j.sample_count + '<br>' +
+        'Memory file: ' + j.memory_path +
+      '</div>' +
+      '<button class="btn btn-sm btn-outline-warning mt-2" onclick="window.location.reload()">Reload</button>';
+  } catch (e) {
+    document.getElementById('step3Err').textContent = String(e);
+  }
+}
+
+async function deleteUser(name) {
+  if (!confirm('Delete voiceprint + raw samples for "' + name + '"? The memory file (' + name + '.md) is left untouched.')) return;
+  try {
+    const r = await fetch('/advanced/user-config/' + name + '/delete', {method: 'POST'});
+    if (!r.ok) throw new Error(await r.text());
+    window.location.reload();
+  } catch (e) { alert('Delete failed: ' + e); }
+}
+</script>
+{% endblock %}

@@ -57,6 +57,12 @@ app.include_router(camera_router)
 from listening_handler import router as listening_router
 app.include_router(listening_router)
 
+from user_config import router as user_config_router
+app.include_router(user_config_router)
+
+from wyoming_whisper import router as wyoming_whisper_router
+app.include_router(wyoming_whisper_router)
+
 
 @app.on_event("startup")
 async def _signal_startup():
@@ -64,11 +70,18 @@ async def _signal_startup():
     start_google_sync()
     from wyoming_kokoro import start as start_wyoming_kokoro
     start_wyoming_kokoro()
+    from wyoming_whisper import start as start_wyoming_whisper
+    start_wyoming_whisper()
 
 # Static audio for Kokoro TTS — Sonos fetches WAVs from here.
 from fastapi.staticfiles import StaticFiles
 from kokoro_tts import AUDIO_DIR as _AUDIO_DIR
 app.mount("/audio", StaticFiles(directory=str(_AUDIO_DIR)), name="audio")
+app.mount(
+    "/static",
+    StaticFiles(directory=str(Path(__file__).parent / "static")),
+    name="static",
+)
 
 memory = MemoryStore()
 recipes = RecipeIngester()
