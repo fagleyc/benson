@@ -1,0 +1,6 @@
+venv/
+voices/
+data/
+synthetic_positive/
+work/
+*.log
