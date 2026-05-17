@@ -18,14 +18,20 @@ api:
   encryption:
     key: !secret api_encryption_key
 
-# Custom "Hey Benson" wake-word model, served by Benson middleware over
-# plain HTTP on the LAN. The manifest references hey_benson.tflite by
-# bare filename, which ESPHome resolves relative to the manifest URL.
+# Custom "Hey Benson" wake-word model, bundled into the firmware at
+# compile time. ESPHome's validator rejects plain http:// URLs, so the
+# .json + .tflite need to live next to this YAML on the build machine.
+# `scp` them down from Benson before flashing:
+#   scp casey@192.168.0.240:/opt/benson/microwakeword/models/hey_benson.json .
+#   scp casey@192.168.0.240:/opt/benson/microwakeword/models/hey_benson.tflite .
+# The .json references the .tflite by relative filename, so they MUST
+# live in the same directory as this YAML.
+#
 # `models: !extend` ADDS to formatBCE's base list (okay_nabu, kenobi,
 # hey_jarvis, hey_mycroft, stop) so they all coexist; HA's Assist
 # pipeline picks which one the satellite actively listens for via
 # `select.respeaker_kitchen_wake_word`.
 micro_wake_word:
   models: !extend
-    - model: http://192.168.0.240:8100/microwakeword/hey_benson.json
+    - model: hey_benson.json
       id: hey_benson
