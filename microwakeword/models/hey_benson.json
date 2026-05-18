@@ -4,9 +4,7 @@
   "author": "Casey Fagley",
   "website": "https://github.com/caseyfagley/benson",
   "model": "hey_benson.tflite",
-  "trained_languages": [
-    "en"
-  ],
+  "trained_languages": ["en"],
   "version": 2,
   "micro": {
     "probability_cutoff": 0.97,
