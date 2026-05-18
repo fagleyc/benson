@@ -214,6 +214,7 @@
         <div class="d-flex flex-wrap gap-1 uc-card-btns mb-2">
           <button class="btn btn-sm btn-outline-warning" onclick="openInterview('{{ u.name }}')">Interview</button>
           <button class="btn btn-sm btn-outline-warning" onclick="openVoice('{{ u.name }}', '{{ u.role or 'guest' }}')">Voice</button>
+          <button class="btn btn-sm btn-outline-warning" onclick="openKitchenMic('{{ u.name }}')" title="Train voiceprint using the kitchen ReSpeaker (matches runtime audio)">Kitchen mic</button>
           <button class="btn btn-sm btn-outline-secondary" onclick="openMemory('{{ u.name }}')">Memory</button>
         </div>
 
@@ -303,6 +304,34 @@
       <span class="small text-secondary">Edit via SSH or the inline Interview / Voice flows — this file is append-only by design.</span>
       <div class="flex-grow-1"></div>
       <button class="btn btn-sm btn-outline-secondary" onclick="closeMemory()">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════ KITCHEN-MIC ENROLLMENT MODAL ═══════════════════════ -->
+<div class="uc-modal-backdrop" id="kmBackdrop" onclick="kmBackdropClick(event)">
+  <div class="uc-modal" onclick="event.stopPropagation()">
+    <div class="uc-modal-header">
+      <h5 id="kmTitle">Kitchen-mic enrollment</h5>
+      <button class="uc-modal-close" onclick="closeKitchenMic()" aria-label="Close">×</button>
+    </div>
+    <div class="uc-modal-body">
+      <p class="small text-secondary mb-3">
+        Talk to the kitchen ReSpeaker so your voiceprint matches the audio
+        chain Benson actually hears. Say <code>Hey Benson, …</code> three times.
+        Each utterance must be at least 3 seconds (try reading one of the
+        practice scripts below).
+      </p>
+      <div class="uc-dots" id="kmDots"></div>
+      <div class="uc-vc-script mb-3" id="kmScript">…</div>
+      <div class="small text-secondary mb-2">Status: <span id="kmStatusLine" class="text-warning">starting…</span></div>
+      <div id="kmSamplesList" class="small text-secondary"></div>
+    </div>
+    <div class="uc-modal-footer">
+      <span class="small text-secondary" id="kmExpiry">expires in 10:00</span>
+      <div class="flex-grow-1"></div>
+      <button class="btn btn-sm btn-outline-danger" onclick="kmCancel()">Cancel</button>
+      <button class="btn btn-sm btn-outline-secondary" onclick="closeKitchenMic()" id="kmCloseBtn" style="display:none">Close</button>
     </div>
   </div>
 </div>
@@ -1024,6 +1053,131 @@ async function openMemory(name) {
 function closeMemory() { showBackdrop('memBackdrop', false); }
 function memBackdropClick(ev) {
   if (ev.target === document.getElementById('memBackdrop')) closeMemory();
+}
+
+// ═══════════════════════ KITCHEN-MIC ENROLLMENT ═══════════════════════
+let kmState = null;
+// {name, needed, pollHandle, lastCollected}
+
+async function openKitchenMic(name) {
+  const needed = 3;
+  document.getElementById('kmTitle').textContent = 'Kitchen-mic enrollment — ' + name;
+  document.getElementById('kmCloseBtn').style.display = 'none';
+  document.getElementById('kmSamplesList').innerHTML = '';
+  document.getElementById('kmStatusLine').textContent = 'starting…';
+  // Show one of the existing scripts as a suggested phrase
+  const sampleScripts = {{ scripts|tojson }};
+  document.getElementById('kmScript').textContent = sampleScripts[0];
+  // Render dots
+  const dotsEl = document.getElementById('kmDots');
+  dotsEl.innerHTML = '';
+  for (let i = 0; i < needed; i++) {
+    const d = document.createElement('span');
+    d.className = 'uc-dot';
+    d.dataset.idx = i;
+    dotsEl.appendChild(d);
+  }
+  showBackdrop('kmBackdrop', true);
+  try {
+    const r = await fetch('/api/voice/enroll-start', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({name, needed}),
+    });
+    if (!r.ok) {
+      const t = await r.text();
+      document.getElementById('kmStatusLine').textContent = 'start failed: ' + t;
+      return;
+    }
+  } catch (e) {
+    document.getElementById('kmStatusLine').textContent = 'start failed: ' + e;
+    return;
+  }
+  kmState = {name, needed, lastCollected: 0};
+  kmRenderDots(0);
+  document.getElementById('kmStatusLine').textContent = 'listening — say "Hey Benson, …" to the kitchen device';
+  if (kmState.pollHandle) clearInterval(kmState.pollHandle);
+  kmState.pollHandle = setInterval(kmPoll, 1500);
+}
+
+function kmRenderDots(collected) {
+  const dotsEl = document.getElementById('kmDots');
+  if (!dotsEl) return;
+  dotsEl.querySelectorAll('.uc-dot').forEach((d, i) => {
+    d.classList.toggle('filled', i < collected);
+    d.classList.toggle('active', i === collected);
+  });
+}
+
+async function kmPoll() {
+  if (!kmState) return;
+  try {
+    const r = await fetch('/api/voice/enroll-status');
+    if (!r.ok) return;
+    const s = await r.json();
+    if (!s.active) {
+      // Either we hit the quota (merge done) or it expired/cancelled.
+      const collected = kmState.lastCollected;
+      kmFinish(collected >= kmState.needed);
+      return;
+    }
+    kmState.lastCollected = s.collected;
+    kmRenderDots(s.collected);
+    document.getElementById('kmExpiry').textContent =
+      'expires in ' + Math.floor(s.expires_in_s / 60) + ':' + String(s.expires_in_s % 60).padStart(2, '0');
+    // Sample list
+    const ul = document.getElementById('kmSamplesList');
+    if (s.samples.length) {
+      ul.innerHTML = s.samples.map((sp, i) =>
+        `<div>· sample ${i+1}: ${sp.duration_s}s at ${(sp.recorded_at || '').slice(11,19)}</div>`
+      ).join('');
+    }
+    if (s.collected >= s.needed) {
+      document.getElementById('kmStatusLine').textContent = 'merging voiceprint…';
+    } else {
+      const remaining = s.needed - s.collected;
+      document.getElementById('kmStatusLine').textContent =
+        `listening — ${remaining} more utterance${remaining === 1 ? '' : 's'} to go (≥ 3 sec each)`;
+    }
+  } catch (e) {
+    /* transient errors fine */
+  }
+}
+
+function kmFinish(success) {
+  if (kmState && kmState.pollHandle) clearInterval(kmState.pollHandle);
+  if (success) {
+    document.getElementById('kmStatusLine').innerHTML =
+      '<span class="text-success">voiceprint updated — closing in a few seconds</span>';
+    setTimeout(() => { closeKitchenMic(); window.location.reload(); }, 2500);
+  } else {
+    document.getElementById('kmStatusLine').innerHTML =
+      '<span class="text-secondary">session ended without enough samples</span>';
+    document.getElementById('kmCloseBtn').style.display = '';
+  }
+}
+
+async function kmCancel() {
+  if (kmState && kmState.pollHandle) clearInterval(kmState.pollHandle);
+  try { await fetch('/api/voice/enroll-cancel', {method: 'POST'}); } catch (e) {}
+  closeKitchenMic();
+}
+
+function closeKitchenMic() {
+  if (kmState && kmState.pollHandle) clearInterval(kmState.pollHandle);
+  kmState = null;
+  showBackdrop('kmBackdrop', false);
+}
+
+function kmBackdropClick(ev) {
+  if (ev.target === document.getElementById('kmBackdrop')) {
+    if (kmState && kmState.lastCollected < kmState.needed) {
+      if (!confirm('Cancel kitchen-mic enrollment?')) return;
+      kmCancel();
+    } else {
+      closeKitchenMic();
+    }
+  }
 }
 
 // ═══════════════════════ WIZARD MODAL (Add Family Member) ═══════════════════════

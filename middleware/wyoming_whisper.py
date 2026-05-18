@@ -29,6 +29,7 @@ import tempfile
 import threading
 import time
 import wave
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
@@ -58,6 +59,119 @@ MIN_VOICE_SECONDS = 0.4
 # = 960 000 bytes). Anything past this is dropped + logged; protects the
 # process from a misbehaving client streaming forever.
 MAX_AUDIO_BYTES = 960_000
+
+# ── Kitchen-mic enrollment ─────────────────────────────────────────────
+# When set, post-wake PCM utterances from HA's pipeline are saved to the
+# named user's raw voiceprint dir until samples_needed is reached. Cleared
+# on completion, cancel, or expiry.
+ENROLL_MIN_SECONDS = 3.0          # ignore short / aborted wakes
+ENROLL_MAX_SECONDS = 30.0
+ENROLL_TIMEOUT_S = 600.0           # auto-clear after 10 min idle
+_enroll_lock = threading.Lock()
+_enroll_state: Optional[dict[str, Any]] = None
+# {"name": "casey", "needed": 3, "samples": [{"path", "duration_s", "recorded_at"}],
+#  "started_at": <epoch>, "expires_at": <epoch>, "embeddings": [np.ndarray, ...]}
+
+
+def _enroll_get() -> Optional[dict[str, Any]]:
+    global _enroll_state
+    with _enroll_lock:
+        if not _enroll_state:
+            return None
+        if time.time() > _enroll_state["expires_at"]:
+            logger.info(f"kitchen-mic enrollment expired for {_enroll_state['name']}")
+            _enroll_state = None
+            return None
+        return dict(_enroll_state)
+
+
+def _enroll_clear() -> None:
+    global _enroll_state
+    with _enroll_lock:
+        _enroll_state = None
+
+
+def _record_enrollment_sample(
+    name: str, pcm: bytes, sample_rate: int, duration_s: float
+) -> None:
+    """Save a post-wake PCM utterance as a voice sample for the named user.
+
+    Embeds via ECAPA, appends to the in-memory enrollment state, and when
+    the quota is hit calls merge_voiceprint to fold the new samples into
+    the running voiceprint.
+    """
+    global _enroll_state
+    import uuid
+    raw_dir = voiceprint.RAW_DIR / name
+    raw_dir.mkdir(parents=True, exist_ok=True)
+    fname = f"kitchen_{uuid.uuid4().hex[:12]}.wav"
+    wav_path = raw_dir / fname
+    try:
+        with wave.open(str(wav_path), "wb") as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)
+            wf.setframerate(sample_rate)
+            wf.writeframes(pcm)
+        emb = voiceprint.extract_embedding(wav_path)
+    except Exception:
+        logger.exception(f"enrollment sample save failed for {name}")
+        try:
+            wav_path.unlink()
+        except OSError:
+            pass
+        return
+
+    done = False
+    with _enroll_lock:
+        if not _enroll_state or _enroll_state["name"] != name:
+            # State was cleared while we were embedding — drop the sample
+            try:
+                wav_path.unlink()
+            except OSError:
+                pass
+            return
+        _enroll_state["samples"].append({
+            "path": str(wav_path),
+            "duration_s": round(duration_s, 2),
+            "recorded_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        })
+        _enroll_state["embeddings"].append(emb)
+        _enroll_state["expires_at"] = time.time() + ENROLL_TIMEOUT_S
+        if len(_enroll_state["samples"]) >= _enroll_state["needed"]:
+            done = True
+        n = len(_enroll_state["samples"])
+        needed = _enroll_state["needed"]
+    logger.info(f"kitchen-mic enrollment: {name} sample {n}/{needed} ({duration_s:.1f}s)")
+
+    if not done:
+        return
+
+    # Merge the new embeddings into the voiceprint + append to JSON metadata.
+    with _enroll_lock:
+        s = _enroll_state
+        if not s:
+            return
+        embs = list(s["embeddings"])
+        samples = list(s["samples"])
+        _enroll_state = None
+
+    try:
+        avg, count = voiceprint.merge_voiceprint(name, embs)
+        meta = voiceprint.load_meta(name) or {}
+        existing_samples = meta.get("samples") or []
+        meta["samples"] = existing_samples + samples
+        meta["sample_count"] = count
+        meta["last_updated_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        meta.setdefault("enrolled_at", datetime.now(timezone.utc).isoformat(timespec="seconds"))
+        meta.setdefault("display_name", name)
+        meta.setdefault("name", name)
+        voiceprint.write_meta(name, meta)
+        logger.info(
+            f"kitchen-mic enrollment complete: {name} merged {len(embs)} new samples "
+            f"(total now {count})"
+        )
+    except Exception:
+        logger.exception(f"merge_voiceprint failed at enrollment finish for {name}")
 
 
 # ─── Speaker cache ──────────────────────────────────────────────────────
@@ -125,6 +239,64 @@ async def latest_speaker(
     `confidence` is the cosine-similarity margin (best - second best).
     """
     return _lookup_speaker(room)
+
+
+@router.post("/enroll-start")
+async def enroll_start(payload: dict[str, Any]) -> dict[str, Any]:
+    """Begin a kitchen-mic enrollment session for {name}.
+
+    Post-wake utterances from HA's pipeline will be saved as voice samples
+    for the named user (in addition to being transcribed normally) until
+    `needed` samples are collected or the session expires.
+    """
+    global _enroll_state
+    name = (payload or {}).get("name") or ""
+    needed = int((payload or {}).get("needed") or 3)
+    if not isinstance(name, str) or not name.strip():
+        raise HTTPException(400, "name required")
+    name = name.strip().lower()
+    needed = max(1, min(needed, 6))
+    md_path = Path("/opt/benson/memory") / f"{name}.md"
+    if not md_path.exists():
+        # No memory file → unknown household member. Refuse so we don't
+        # quietly create a brand-new identity from kitchen audio.
+        raise HTTPException(404, f"{name} is not a known household member")
+    raw_dir = voiceprint.RAW_DIR / name
+    raw_dir.mkdir(parents=True, exist_ok=True)
+    now = time.time()
+    with _enroll_lock:
+        _enroll_state = {
+            "name": name,
+            "needed": needed,
+            "samples": [],
+            "embeddings": [],
+            "started_at": now,
+            "expires_at": now + ENROLL_TIMEOUT_S,
+        }
+    logger.info(f"kitchen-mic enrollment started: {name} need={needed}")
+    return {"ok": True, "name": name, "needed": needed, "expires_in_s": ENROLL_TIMEOUT_S}
+
+
+@router.get("/enroll-status")
+async def enroll_status() -> dict[str, Any]:
+    s = _enroll_get()
+    if not s:
+        return {"active": False}
+    return {
+        "active": True,
+        "name": s["name"],
+        "needed": s["needed"],
+        "collected": len(s["samples"]),
+        "samples": s["samples"],
+        "expires_in_s": max(0, int(s["expires_at"] - time.time())),
+    }
+
+
+@router.post("/enroll-cancel")
+async def enroll_cancel() -> dict[str, Any]:
+    s = _enroll_get()
+    _enroll_clear()
+    return {"ok": True, "was_active": bool(s)}
 
 
 @router.post("/transcribe")
@@ -502,6 +674,17 @@ async def _process_turn(
             )
             t_spk = time.time() - t_b
             _record_speaker(room, speaker, best, margin)
+
+            # Kitchen-mic enrollment hook: if a session is active and this
+            # utterance is long enough, save it as a voice sample for the
+            # named user. Runs in addition to the normal STT path.
+            enroll_s = _enroll_get()
+            if enroll_s and pcm:
+                duration_s = len(pcm) / 2 / max(sample_rate, 1)
+                if ENROLL_MIN_SECONDS <= duration_s <= ENROLL_MAX_SECONDS:
+                    await loop.run_in_executor(
+                        None, _record_enrollment_sample, enroll_s["name"], pcm, sample_rate, duration_s
+                    )
     except Exception:
         logger.exception("STT turn failed")
 
