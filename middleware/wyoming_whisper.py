@@ -32,7 +32,7 @@ import wave
 from pathlib import Path
 from typing import Any, Optional
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, HTTPException, Query, UploadFile
 
 import voiceprint
 
@@ -125,6 +125,65 @@ async def latest_speaker(
     `confidence` is the cosine-similarity margin (best - second best).
     """
     return _lookup_speaker(room)
+
+
+@router.post("/transcribe")
+async def transcribe_upload(audio: UploadFile) -> dict[str, Any]:
+    """Run whisper over an uploaded audio blob and return text.
+
+    Browser MediaRecorder ships WebM/Ogg/MP4 chunks; ffmpeg normalizes
+    to 16 kHz mono PCM WAV before handing to the same whisper model
+    that serves HA's Assist pipeline.
+    """
+    import subprocess
+    import tempfile
+
+    raw = await audio.read()
+    if not raw:
+        raise HTTPException(400, "empty audio")
+    if len(raw) > 20 * 1024 * 1024:
+        raise HTTPException(400, "audio too large (max 20 MB)")
+
+    in_suffix = (audio.filename or "").lower().split(".")[-1] or "webm"
+    if in_suffix not in {"webm", "ogg", "m4a", "mp4", "wav", "mp3"}:
+        in_suffix = "webm"
+
+    with tempfile.NamedTemporaryFile(suffix=f".{in_suffix}", delete=False) as f_in:
+        in_path = Path(f_in.name)
+        f_in.write(raw)
+    out_path = in_path.with_name(in_path.stem + "_16k.wav")
+
+    def _convert_and_transcribe() -> str:
+        proc = subprocess.run(
+            ["ffmpeg", "-y", "-loglevel", "error", "-i", str(in_path),
+             "-ac", "1", "-ar", "16000", str(out_path)],
+            capture_output=True, timeout=20,
+        )
+        if proc.returncode != 0:
+            err = proc.stderr.decode("utf-8", errors="replace")[:400]
+            raise RuntimeError(f"ffmpeg failed: {err}")
+        with open(out_path, "rb") as f:
+            wav_bytes = f.read()
+        # PCM int16 LE — strip 44-byte WAV header.
+        pcm = wav_bytes[44:]
+        return _transcribe_pcm(pcm, 16000, "en")
+
+    try:
+        text = await asyncio.to_thread(_convert_and_transcribe)
+    except Exception as e:
+        logger.exception("transcribe failed")
+        raise HTTPException(500, f"transcribe failed: {e}")
+    finally:
+        try:
+            in_path.unlink()
+        except OSError:
+            pass
+        try:
+            out_path.unlink()
+        except OSError:
+            pass
+
+    return {"text": text}
 
 
 # ─── Whisper model (lazy-loaded on first STT call) ──────────────────────

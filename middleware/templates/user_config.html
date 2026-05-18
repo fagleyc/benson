@@ -93,6 +93,17 @@
   }
   .uc-iv-hint { color: #8a96a3; font-size: .78rem; margin-top: .3rem; }
   .uc-iv-textarea { font-size: .95rem; }
+  .uc-iv-mic-row { display: flex; gap: .4rem; align-items: center; margin-top: .35rem; }
+  .uc-iv-mic-btn {
+    background: #2a3742; color: #f39c12; border: 1px solid #3a4a55;
+    border-radius: 4px; padding: .25rem .55rem; font-size: .78rem;
+    cursor: pointer; display: inline-flex; align-items: center; gap: .35rem;
+  }
+  .uc-iv-mic-btn:hover { background: #354554; }
+  .uc-iv-mic-btn.recording { background: #b94a4a; color: #fff; border-color: #d05a5a;
+    animation: ucMicPulse 1s ease-in-out infinite; }
+  .uc-iv-mic-btn:disabled { opacity: .55; cursor: default; }
+  .uc-iv-mic-status { color: #8a96a3; font-size: .76rem; }
 
   /* ─── Voice modal body ─── */
   .uc-vc-script {
@@ -226,8 +237,14 @@
       <div class="uc-dots" id="ivDots"></div>
       <div class="uc-iv-question" id="ivQuestion">…</div>
       <textarea id="ivAnswer" class="form-control bg-dark text-light border-secondary uc-iv-textarea"
-                rows="4" placeholder="Type an answer (or leave blank to keep existing / skip)…"></textarea>
-      <div class="uc-iv-hint" id="ivHint">Type your update, or leave unchanged to keep the existing answer.</div>
+                rows="4" placeholder="Type an answer (or click 🎤 to dictate)…"></textarea>
+      <div class="uc-iv-mic-row">
+        <button type="button" class="uc-iv-mic-btn" id="ivMicBtn" onclick="ivToggleMic()">
+          <span id="ivMicGlyph">●</span> <span id="ivMicLabel">Dictate</span>
+        </button>
+        <span class="uc-iv-mic-status" id="ivMicStatus"></span>
+      </div>
+      <div class="uc-iv-hint" id="ivHint">Type or dictate. Leave blank to keep the existing answer.</div>
       <div class="small text-danger mt-2" id="ivErr"></div>
     </div>
     <div class="uc-modal-footer">
@@ -484,8 +501,116 @@ function closeInterview() {
   if (ivState && Object.keys(ivState.edits).length > 0) {
     if (!confirm('You have unsaved edits. Close without saving?')) return;
   }
+  ivStopMic(true);
   showBackdrop('ivBackdrop', false);
   ivState = null;
+}
+
+// ─── Interview dictation (mic → /api/voice/transcribe → textarea) ─────
+let ivMicStream = null;
+let ivMicRec = null;
+let ivMicChunks = [];
+let ivMicStartTs = 0;
+
+async function ivToggleMic() {
+  if (ivMicRec && ivMicRec.state === 'recording') {
+    ivStopMic(false);
+    return;
+  }
+  const btn = document.getElementById('ivMicBtn');
+  const status = document.getElementById('ivMicStatus');
+  try {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      throw new Error('mic API unavailable (needs HTTPS or localhost)');
+    }
+    ivMicStream = await navigator.mediaDevices.getUserMedia({audio: true});
+  } catch (e) {
+    status.textContent = String(e);
+    status.style.color = '#f0aaaa';
+    return;
+  }
+  ivMicChunks = [];
+  let mime = 'audio/webm;codecs=opus';
+  if (!MediaRecorder.isTypeSupported(mime)) mime = 'audio/webm';
+  if (!MediaRecorder.isTypeSupported(mime)) mime = '';
+  try {
+    ivMicRec = new MediaRecorder(ivMicStream, mime ? {mimeType: mime} : {});
+  } catch (e) {
+    status.textContent = 'MediaRecorder init failed: ' + e;
+    status.style.color = '#f0aaaa';
+    ivStopMic(true);
+    return;
+  }
+  ivMicRec.ondataavailable = (ev) => { if (ev.data && ev.data.size > 0) ivMicChunks.push(ev.data); };
+  ivMicRec.onstop = () => ivUploadDictation();
+  ivMicRec.start();
+  ivMicStartTs = Date.now();
+  btn.classList.add('recording');
+  document.getElementById('ivMicGlyph').textContent = '■';
+  document.getElementById('ivMicLabel').textContent = 'Stop';
+  status.style.color = '#aab';
+  status.textContent = 'listening…';
+}
+
+function ivStopMic(silent) {
+  try { if (ivMicRec && ivMicRec.state === 'recording') ivMicRec.stop(); } catch (e) {}
+  if (ivMicStream) {
+    ivMicStream.getTracks().forEach(t => t.stop());
+    ivMicStream = null;
+  }
+  const btn = document.getElementById('ivMicBtn');
+  if (btn) {
+    btn.classList.remove('recording');
+    document.getElementById('ivMicGlyph').textContent = '●';
+    document.getElementById('ivMicLabel').textContent = 'Dictate';
+  }
+  if (silent) {
+    const s = document.getElementById('ivMicStatus');
+    if (s) s.textContent = '';
+  }
+}
+
+async function ivUploadDictation() {
+  const status = document.getElementById('ivMicStatus');
+  const btn = document.getElementById('ivMicBtn');
+  const dur = (Date.now() - ivMicStartTs) / 1000;
+  if (dur < 0.5) {
+    status.textContent = 'too short — try again';
+    status.style.color = '#f0aaaa';
+    ivStopMic(false);
+    return;
+  }
+  status.style.color = '#aab';
+  status.textContent = `transcribing ${dur.toFixed(1)}s…`;
+  btn.disabled = true;
+  const blob = new Blob(ivMicChunks, {type: ivMicRec.mimeType || 'audio/webm'});
+  const ext = (ivMicRec.mimeType || '').indexOf('ogg') >= 0 ? 'ogg' : 'webm';
+  const fd = new FormData();
+  fd.append('audio', blob, 'dictation.' + ext);
+  try {
+    const r = await fetch('/api/voice/transcribe', {method: 'POST', body: fd});
+    if (!r.ok) throw new Error(await r.text());
+    const j = await r.json();
+    const text = (j.text || '').trim();
+    if (!text) {
+      status.textContent = 'no speech detected — try again';
+      status.style.color = '#f0aaaa';
+    } else {
+      const ta = document.getElementById('ivAnswer');
+      const cur = (ta.value || '').trim();
+      ta.value = cur ? (cur + ' ' + text) : text;
+      ta.focus();
+      ta.dispatchEvent(new Event('input', {bubbles: true}));
+      status.textContent = `transcribed (${text.length} chars)`;
+      status.style.color = '#7fdb9b';
+    }
+  } catch (e) {
+    status.textContent = 'transcribe failed: ' + e;
+    status.style.color = '#f0aaaa';
+  } finally {
+    btn.disabled = false;
+    ivStopMic(false);
+  }
 }
 
 function ivBackdropClick(ev) {
