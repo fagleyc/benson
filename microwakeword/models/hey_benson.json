@@ -14,6 +14,5 @@
     "sliding_window_size": 5,
     "tensor_arena_size": 30000,
     "minimum_esphome_version": "2024.7.0"
-  },
-  "_last_deploy_test": "2026-05-17T18:49Z"
+  }
 }
