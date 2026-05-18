@@ -3,4 +3,5 @@ voices/
 data/
 synthetic_positive/
 work/
+family_positives/
 *.log

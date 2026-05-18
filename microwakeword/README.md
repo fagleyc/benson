@@ -191,6 +191,26 @@ short for mWW to discriminate against close-by negatives. Train one model
 for `Hey Benson`, set its probability_cutoff aggressively, and revisit
 bare "Benson" only after months of real-world tuning data.
 
+## Family-voice retraining (browser-capture flow)
+
+The Family page at `/advanced/user-config` has a **"Wake-word training"**
+section. Per-member browser-mic capture writes 16 kHz mono WAVs into
+`family_positives/<name>/<uuid>.wav` (gitignored — these are private).
+
+`train_hey_benson.py` automatically picks up anything under
+`family_positives/`, applies ~5× augmentation per clip (time-shift,
+±3 dB gain, noise floor), and blends them into the synthetic positive
+pool before the standard build-features / train pipeline. Synthetic
+clips remain a symlinked majority of the pool; family share grows as
+their count grows.
+
+After training, copy + manifest happen automatically (Stage 4 in the
+script), then the UI's **Deploy** button does
+`git add models/hey_benson.{tflite,json}` + commit + push so the ESPHome
+device can refetch via raw GitHub URL on next compile/flash. The deploy
+endpoint guarantees only the model artifacts hit git; `family_positives/`
+is `.gitignore`d as a defence-in-depth.
+
 ## References
 
 - microWakeWord training repo (OHF-Voice fork is current):

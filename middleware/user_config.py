@@ -805,3 +805,366 @@ async def delete_user(name: str) -> dict[str, Any]:
     _check_reserved(slug)
     result = await asyncio.to_thread(vp.delete, slug)
     return {"ok": True, **result}
+
+
+# ═══════════════════════ WAKE-WORD TRAINING ═══════════════════════════════
+MWW_ROOT = Path("/opt/benson/microwakeword")
+FAMILY_POS_DIR = MWW_ROOT / "family_positives"
+MODEL_TFLITE = MWW_ROOT / "models" / "hey_benson.tflite"
+MODEL_JSON = MWW_ROOT / "models" / "hey_benson.json"
+TRAIN_SCRIPT = MWW_ROOT / "train_hey_benson.py"
+TRAIN_VENV_PY = MWW_ROOT / "venv" / "bin" / "python"
+ESPHOME_BIN = Path("/opt/benson/esphome/venv/bin/esphome")
+ESPHOME_YAML = Path("/opt/benson/scripts/ears/respeaker-kitchen.yaml")
+GIT_ROOT = Path("/opt/benson")
+
+WW_MIN_SAMPLE_S = 0.6
+WW_MAX_SAMPLE_S = 3.0
+WW_UUID_RE = re.compile(r"^[a-f0-9]{8,32}$")
+
+# Module-level single-job state. Tracks both /train and /deploy because the
+# UI tails them through the same status endpoint.
+_train_state: dict[str, Any] = {
+    "job_id": None,
+    "kind": None,           # "train" or "deploy"
+    "process": None,        # asyncio subprocess handle
+    "started_at": None,
+    "finished_at": None,
+    "success": None,
+    "log_path": None,
+    "pid": None,
+}
+
+
+def _wake_word_member_dir(slug: str) -> Path:
+    return FAMILY_POS_DIR / slug
+
+
+def _list_wake_samples(slug: str) -> list[dict]:
+    d = _wake_word_member_dir(slug)
+    if not d.is_dir():
+        return []
+    out: list[dict] = []
+    for p in sorted(d.glob("*.wav")):
+        try:
+            mtime = datetime.fromtimestamp(p.stat().st_mtime, tz=timezone.utc)
+            recorded_at = mtime.isoformat(timespec="seconds")
+        except OSError:
+            recorded_at = None
+        out.append({
+            "uuid": p.stem,
+            "filename": p.name,
+            "recorded_at": recorded_at,
+        })
+    return out
+
+
+def _wake_word_status_sync() -> dict[str, Any]:
+    members_summary: list[dict] = []
+    total = 0
+    for md_path in sorted(MEMORY_DIR.glob("*.md")):
+        slug = md_path.stem.lower()
+        if slug in RESERVED_SLUGS:
+            continue
+        samples = _list_wake_samples(slug)
+        total += len(samples)
+        last = samples[-1]["recorded_at"] if samples else None
+        members_summary.append({
+            "name": slug,
+            "sample_count": len(samples),
+            "last_sample_at": last,
+        })
+    last_trained_at = None
+    model_age_days = None
+    if MODEL_TFLITE.exists():
+        mtime = datetime.fromtimestamp(MODEL_TFLITE.stat().st_mtime, tz=timezone.utc)
+        last_trained_at = mtime.isoformat(timespec="seconds")
+        model_age_days = (datetime.now(timezone.utc) - mtime).days
+    return {
+        "members": members_summary,
+        "total_family_samples": total,
+        "model_age_days": model_age_days,
+        "last_trained_at": last_trained_at,
+    }
+
+
+@router.get("/wake-word/status")
+async def wake_word_status() -> dict[str, Any]:
+    return await asyncio.to_thread(_wake_word_status_sync)
+
+
+@router.post("/wake-word/{name}/sample")
+async def upload_wake_word_sample(
+    name: str, audio: UploadFile = File(...)
+) -> dict[str, Any]:
+    slug = _slugify(name)
+    _check_reserved(slug)
+    md_path = MEMORY_DIR / f"{slug}.md"
+    if not md_path.exists() and not vp.load_meta(slug):
+        raise HTTPException(404, f"{slug} is not a household member")
+    body = await audio.read()
+    if not body:
+        raise HTTPException(400, "empty upload")
+    if len(body) > MAX_UPLOAD_BYTES:
+        raise HTTPException(400, "upload too large")
+    raw_dir = _wake_word_member_dir(slug)
+    raw_dir.mkdir(parents=True, exist_ok=True)
+    sample_id = uuid.uuid4().hex[:12]
+    in_suffix = (audio.filename or "").lower().split(".")[-1] or "webm"
+    in_path = raw_dir / f"{sample_id}.src.{in_suffix}"
+    out_path = raw_dir / f"{sample_id}.wav"
+    in_path.write_bytes(body)
+    proc = await asyncio.create_subprocess_exec(
+        "ffmpeg", "-y", "-loglevel", "error",
+        "-i", str(in_path),
+        "-ac", "1", "-ar", "16000",
+        "-acodec", "pcm_s16le",
+        str(out_path),
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    _, stderr = await proc.communicate()
+    try:
+        in_path.unlink()
+    except OSError:
+        pass
+    if proc.returncode != 0 or not out_path.exists():
+        raise HTTPException(
+            400,
+            f"ffmpeg failed: {stderr[:300].decode(errors='replace')}",
+        )
+    duration_s = await asyncio.to_thread(_probe_duration, out_path)
+    if duration_s < WW_MIN_SAMPLE_S:
+        out_path.unlink(missing_ok=True)
+        raise HTTPException(
+            400, f"sample too short ({duration_s:.2f}s; need >= {WW_MIN_SAMPLE_S}s)"
+        )
+    if duration_s > WW_MAX_SAMPLE_S:
+        out_path.unlink(missing_ok=True)
+        raise HTTPException(
+            400, f"sample too long ({duration_s:.2f}s; cap {WW_MAX_SAMPLE_S}s)"
+        )
+    total = len(list(raw_dir.glob("*.wav")))
+    return {
+        "ok": True,
+        "uuid": sample_id,
+        "sample_count": total,
+        "duration_s": round(duration_s, 2),
+    }
+
+
+@router.get("/wake-word/{name}/list")
+async def list_wake_word_samples(name: str) -> dict[str, Any]:
+    slug = _slugify(name)
+    _check_reserved(slug)
+    samples = await asyncio.to_thread(_list_wake_samples, slug)
+    return {"name": slug, "uuids": [s["uuid"] for s in samples], "samples": samples}
+
+
+@router.delete("/wake-word/{name}/sample/{sample_uuid}")
+async def delete_wake_word_sample(name: str, sample_uuid: str) -> dict[str, Any]:
+    slug = _slugify(name)
+    _check_reserved(slug)
+    if not WW_UUID_RE.match(sample_uuid):
+        raise HTTPException(400, "bad uuid")
+    p = _wake_word_member_dir(slug) / f"{sample_uuid}.wav"
+    if not p.exists():
+        raise HTTPException(404, "sample not found")
+    try:
+        await asyncio.to_thread(p.unlink)
+    except OSError as e:
+        raise HTTPException(500, f"delete failed: {e}")
+    return {"ok": True, "uuid": sample_uuid}
+
+
+def _tail_log(path: Path, n: int = 20) -> list[str]:
+    if not path or not path.exists():
+        return []
+    try:
+        with path.open("rb") as f:
+            f.seek(0, 2)
+            size = f.tell()
+            chunk = min(size, 16384)
+            f.seek(size - chunk)
+            data = f.read().decode("utf-8", errors="replace")
+        lines = data.splitlines()
+        return lines[-n:]
+    except OSError:
+        return []
+
+
+def _job_running() -> bool:
+    proc = _train_state.get("process")
+    if proc is None:
+        return False
+    return proc.returncode is None
+
+
+async def _watch_job(proc, log_fh) -> None:
+    try:
+        rc = await proc.wait()
+    finally:
+        try:
+            log_fh.close()
+        except Exception:
+            pass
+        if _train_state.get("process") is proc:
+            _train_state["finished_at"] = _now_iso()
+            _train_state["success"] = (rc == 0)
+
+
+@router.post("/wake-word/train")
+async def wake_word_train(request: Request) -> dict[str, Any]:
+    if _job_running():
+        raise HTTPException(409, f"job already running: {_train_state.get('kind')}")
+    job_id = uuid.uuid4().hex[:12]
+    log_path = Path(f"/tmp/hey-benson-train-{job_id}.log")
+    log_fh = log_path.open("wb")
+    py = TRAIN_VENV_PY if TRAIN_VENV_PY.exists() else Path("python3")
+    proc = await asyncio.create_subprocess_exec(
+        str(py), "-u", str(TRAIN_SCRIPT),
+        stdout=log_fh, stderr=asyncio.subprocess.STDOUT,
+        cwd=str(MWW_ROOT),
+    )
+    _train_state.update({
+        "job_id": job_id,
+        "kind": "train",
+        "process": proc,
+        "started_at": _now_iso(),
+        "finished_at": None,
+        "success": None,
+        "log_path": str(log_path),
+        "pid": proc.pid,
+    })
+    asyncio.create_task(_watch_job(proc, log_fh))
+    return {"job_id": job_id, "log_path": str(log_path)}
+
+
+@router.get("/wake-word/train-status")
+async def wake_word_train_status() -> dict[str, Any]:
+    log_path = _train_state.get("log_path")
+    lines = await asyncio.to_thread(_tail_log, Path(log_path) if log_path else None, 20)
+    running = _job_running()
+    return {
+        "running": running,
+        "kind": _train_state.get("kind"),
+        "job_id": _train_state.get("job_id"),
+        "started_at": _train_state.get("started_at"),
+        "pid": _train_state.get("pid"),
+        "log_path": log_path,
+        "last_log_lines": lines,
+        "finished_at": _train_state.get("finished_at"),
+        "success": _train_state.get("success"),
+    }
+
+
+@router.post("/wake-word/train-cancel")
+async def wake_word_train_cancel() -> dict[str, Any]:
+    proc = _train_state.get("process")
+    if not proc or proc.returncode is not None:
+        return {"ok": True, "running": False}
+    try:
+        proc.terminate()
+    except ProcessLookupError:
+        pass
+    return {"ok": True, "running": True, "signal": "SIGTERM"}
+
+
+def _run_deploy_sync(log_path: Path, flash: bool, sample_total: int) -> int:
+    """Commit + push the model artifacts; optionally OTA-flash the device.
+
+    Hard guarantee: only models/hey_benson.{tflite,json} land in git. Never
+    touch family_positives/ — that path is gitignored anyway, but we
+    explicitly add only the model files.
+    """
+    import shlex
+    today = date.today().isoformat()
+    msg = f"wake-word retrain {today}: {sample_total} family samples"
+    rel_tflite = "microwakeword/models/hey_benson.tflite"
+    rel_json = "microwakeword/models/hey_benson.json"
+
+    with log_path.open("ab") as f:
+        def run(cmd: list[str], cwd: Path) -> int:
+            f.write(f"$ {' '.join(shlex.quote(c) for c in cmd)}\n".encode())
+            f.flush()
+            r = subprocess.run(
+                cmd, cwd=str(cwd), stdout=f, stderr=subprocess.STDOUT
+            )
+            f.write(f"[exit {r.returncode}]\n".encode())
+            f.flush()
+            return r.returncode
+
+        rc = run(["git", "add", rel_tflite, rel_json], GIT_ROOT)
+        if rc != 0:
+            return rc
+        # diff-index returns 1 when there is something to commit, 0 when clean.
+        diff_rc = subprocess.run(
+            ["git", "diff", "--cached", "--quiet", "--", rel_tflite, rel_json],
+            cwd=str(GIT_ROOT),
+        ).returncode
+        if diff_rc != 0:
+            rc = run(["git", "commit", "-m", msg, "--", rel_tflite, rel_json], GIT_ROOT)
+            if rc != 0:
+                return rc
+        else:
+            f.write(b"[deploy] model artifacts unchanged - skipping commit\n")
+        rc = run(["git", "push", "origin", "main"], GIT_ROOT)
+        if rc != 0:
+            return rc
+        if flash:
+            rc = run(
+                [str(ESPHOME_BIN), "run", str(ESPHOME_YAML),
+                 "--device", "respeaker-kitchen.local"],
+                ESPHOME_YAML.parent,
+            )
+            if rc != 0:
+                return rc
+        f.write(b"[deploy] done\n")
+    return 0
+
+
+@router.post("/wake-word/deploy")
+async def wake_word_deploy(request: Request) -> dict[str, Any]:
+    if _job_running():
+        raise HTTPException(409, f"job already running: {_train_state.get('kind')}")
+    body = {}
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    flash = bool(body.get("flash"))
+    if not MODEL_TFLITE.exists() or not MODEL_JSON.exists():
+        raise HTTPException(400, "model artifacts missing — train first")
+    status = await asyncio.to_thread(_wake_word_status_sync)
+    sample_total = int(status.get("total_family_samples") or 0)
+    job_id = uuid.uuid4().hex[:12]
+    log_path = Path(f"/tmp/hey-benson-deploy-{job_id}.log")
+    log_path.write_bytes(b"")  # truncate
+
+    async def _go() -> None:
+        rc = await asyncio.to_thread(_run_deploy_sync, log_path, flash, sample_total)
+        _train_state["finished_at"] = _now_iso()
+        _train_state["success"] = (rc == 0)
+        _train_state["process"] = None
+        _train_state["pid"] = None
+
+    # Fake process sentinel so _job_running() returns true while deploy runs.
+    class _Sentinel:
+        returncode = None
+    sentinel = _Sentinel()
+    _train_state.update({
+        "job_id": job_id,
+        "kind": "deploy",
+        "process": sentinel,
+        "started_at": _now_iso(),
+        "finished_at": None,
+        "success": None,
+        "log_path": str(log_path),
+        "pid": None,
+    })
+    task = asyncio.create_task(_go())
+
+    def _clear_sentinel(_t: Any) -> None:
+        sentinel.returncode = 0 if _train_state.get("success") else 1
+    task.add_done_callback(_clear_sentinel)
+    return {"job_id": job_id, "log_path": str(log_path)}
