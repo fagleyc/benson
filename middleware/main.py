@@ -51,6 +51,8 @@ app.include_router(signal_router)
 from google_handler import router as google_router, start_sync_loop as start_google_sync
 app.include_router(google_router)
 
+from scheduled_actions import ensure_schema as _sa_ensure_schema, start_worker as start_scheduler
+
 from camera_handler import router as camera_router
 app.include_router(camera_router)
 
@@ -68,6 +70,8 @@ app.include_router(wyoming_whisper_router)
 async def _signal_startup():
     start_signal_poller()
     start_google_sync()
+    _sa_ensure_schema()
+    start_scheduler()
     from wyoming_kokoro import start as start_wyoming_kokoro
     start_wyoming_kokoro()
     from wyoming_whisper import start as start_wyoming_whisper

@@ -2554,6 +2554,80 @@ async def _tool_propose_change(rationale: str, instructions: str) -> dict:
     return await propose_change(rationale=rationale, instructions=instructions)
 
 
+# ─── Persistent scheduler ─────────────────────────────────────────────────
+@_register(
+    "schedule_job",
+    "Schedule a one-shot household action to fire at a future time, "
+    "persisted to the database so it survives session restarts. "
+    "action_type must be one of: 'announce', 'play_music', 'send_signal'. "
+    "fire_at is an ISO-8601 datetime string (e.g. '2026-05-18T06:20:00-06:00'). "
+    "Returns {ok, id, fire_at} on success.",
+    {
+        "type": "object",
+        "properties": {
+            "action_type": {
+                "type": "string",
+                "enum": ["announce", "play_music", "send_signal"],
+                "description": "Which household action to fire.",
+            },
+            "action_params": {
+                "type": "object",
+                "description": "Keyword-argument dict for the action (same params you'd pass to the tool directly).",
+            },
+            "fire_at": {
+                "type": "string",
+                "description": "ISO-8601 datetime when the action should fire, including timezone offset.",
+            },
+            "created_by": {
+                "type": "string",
+                "description": "Who scheduled this (default 'benson').",
+            },
+        },
+        "required": ["action_type", "action_params", "fire_at"],
+    },
+)
+async def schedule_job(action_type: str, action_params: dict, fire_at: str, created_by: str = "benson") -> dict:
+    from scheduled_actions import schedule
+    return await schedule(action_type, action_params, fire_at, created_by)
+
+
+@_register(
+    "cancel_job",
+    "Cancel a pending scheduled job by its integer id. "
+    "Returns {ok, id} or {ok: false, error}.",
+    {
+        "type": "object",
+        "properties": {
+            "id": {"type": "integer", "description": "The scheduled job id to cancel."},
+        },
+        "required": ["id"],
+    },
+)
+async def cancel_job(id: int) -> dict:
+    from scheduled_actions import cancel
+    return await cancel(id)
+
+
+@_register(
+    "list_scheduled_jobs",
+    "List pending (and optionally all) scheduled household actions. "
+    "Returns {ok, count, actions:[...]}.",
+    {
+        "type": "object",
+        "properties": {
+            "include_fired": {
+                "type": "boolean",
+                "description": "If true, include already-fired and cancelled jobs. Default false.",
+            },
+        },
+        "required": [],
+    },
+)
+async def list_scheduled_jobs(include_fired: bool = False) -> dict:
+    from scheduled_actions import list_actions
+    return await list_actions(include_fired)
+
+
 # ─── Strip legacy DB-backed memory tools (replaced by file-based memory_*) ─
 _LEGACY_MEMORY_TOOLS = {
     "search_memory",
