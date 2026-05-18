@@ -418,9 +418,10 @@ async function wwRecUpload() {
       method: 'POST', body: fd
     });
     if (!r.ok) {
-      const txt = await r.text();
-      err.textContent = 'rejected: ' + txt;
-      status.textContent = 'try again';
+      let detail = await r.text();
+      try { detail = JSON.parse(detail).detail || detail; } catch (e) {}
+      err.textContent = 'rejected: ' + detail + ' (clip was ' + dur.toFixed(2) + 's; need 0.6-3.0s)';
+      status.textContent = 'try again — press the mic and say "Hey Benson"';
       return;
     }
     const j = await r.json();
@@ -547,5 +548,21 @@ async function wwLogPoll() {
 if (document.getElementById('wwSection')) {
   wwRefresh();
 }
+
+// Safety net: ESC closes any visible backdrop. Without this, a wedged
+// backdrop dims the page and looks like "UI disappeared".
+document.addEventListener('keydown', (ev) => {
+  if (ev.key !== 'Escape') return;
+  document.querySelectorAll('.uc-modal-backdrop.show').forEach(b => b.classList.remove('show'));
+});
+
+// Loud console logging on any unhandled JS error so we can see it next
+// time without a F12 sleuth session.
+window.addEventListener('error', (ev) => {
+  console.error('[advanced/voice] uncaught:', ev.message, 'at', ev.filename + ':' + ev.lineno);
+});
+window.addEventListener('unhandledrejection', (ev) => {
+  console.error('[advanced/voice] unhandled promise rejection:', ev.reason);
+});
 </script>
 {% endblock %}
