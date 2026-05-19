@@ -203,19 +203,26 @@ def select(
             rationale="multi-constraint planning / deep deliberation",
         )
 
+    # Casey 2026-05-19: default chat path bumped to Opus across the board.
+    # Token usage hasn't been substantial, and Opus's deliberation makes
+    # the household assistant noticeably more reliable. Compose-announce,
+    # vision, and memory_extraction still route to Sonnet above for their
+    # latency/cost profiles.
     if _SONNET_PATTERNS.search(text) or len(text.split()) > 60:
         choice = ModelChoice(
-            tier=ModelTier.SONNET,
-            model_id=MODEL_ID[ModelTier.SONNET],
-            max_tokens=2048,
-            rationale="needs structured output, draft, or code",
+            tier=ModelTier.OPUS,
+            model_id=MODEL_ID[ModelTier.OPUS],
+            thinking_tokens=THINKING_BUDGET[ModelTier.OPUS],
+            max_tokens=4096,
+            rationale="structured output / draft / code — Opus default",
         )
     else:
         choice = ModelChoice(
-            tier=ModelTier.SONNET,
-            model_id=MODEL_ID[ModelTier.SONNET],
-            max_tokens=800,
-            rationale="default chat / household Q&A — Sonnet baseline for reasoning",
+            tier=ModelTier.OPUS,
+            model_id=MODEL_ID[ModelTier.OPUS],
+            thinking_tokens=THINKING_BUDGET[ModelTier.OPUS],
+            max_tokens=2048,
+            rationale="default chat / household Q&A — Opus baseline",
         )
 
     # Failure-recency bump (Casey 2026-04-30: opus after failure) and
