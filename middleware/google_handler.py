@@ -704,19 +704,100 @@ def delete_event(user_name: str, event_id: str, *, calendar: str | None = None) 
     return {"ok": True, "event_id": event_id, "calendar": cal_name}
 
 
+# ─── Token-health nudge ─────────────────────────────────────────────────
+# Google rotates refresh tokens for unverified-app sensitive scopes on a
+# variable cadence (~monthly in practice for this app). Rather than fix
+# the cadence (requires Google verification or Workspace), we detect the
+# flip from `ok` → `refresh_failed:*` in the existing 15-min sync loop
+# and Signal the affected user with a one-tap re-link URL. Throttled to
+# one nudge per user per NUDGE_COOLDOWN_S so a stuck failure doesn't spam.
+
+NUDGE_COOLDOWN_S = 6 * 3600
+
+# Where each user's nudge goes. Falls back to Casey's number for users
+# without a known Signal contact (he'll forward).
+USER_SIGNAL_TO = {
+    "casey": "+15056208470",
+    "lindsey": "+15056208470",  # Casey forwards; replace when Lindsey is on Signal
+}
+NUDGE_FALLBACK = "+15056208470"
+
+# user_name -> (last_status, last_nudge_ts_epoch)
+_TOKEN_STATE: dict[str, tuple[str, float]] = {}
+
+
+def _public_base_url() -> str:
+    # The reverse-proxy hostname Casey can tap from a Signal link.
+    return os.environ.get("BENSON_PUBLIC_URL", "https://benson.local")
+
+
+async def _send_oauth_nudge(user_name: str, status: str) -> None:
+    """Signal the user with a one-tap re-link URL for /admin/google."""
+    import time as _time
+    last = _TOKEN_STATE.get(user_name)
+    now = _time.time()
+    if last and last[0] == status and (now - last[1]) < NUDGE_COOLDOWN_S:
+        return
+    _TOKEN_STATE[user_name] = (status, now)
+    to = USER_SIGNAL_TO.get(user_name.lower(), NUDGE_FALLBACK)
+    url = f"{_public_base_url()}/admin/google"
+    reason = status.split(":", 1)[1] if ":" in status else status
+    text = (
+        f"Benson here — {user_name.title()}'s Google OAuth needs re-linking "
+        f"(Google revoked the refresh token: {reason[:80]}).\n\n"
+        f"Tap to re-authorize: {url}\n\n"
+        "Once you finish the flow, calendar + email tools start working "
+        "again automatically. You won't hear from me again on this until "
+        "the next time Google revokes."
+    )
+    try:
+        from signal_handler import send_signal_message
+        result = await send_signal_message(to, text)
+        logger.info(
+            f"oauth nudge sent to {to} for {user_name} "
+            f"(status={status}, ok={result.get('ok')})"
+        )
+    except Exception:
+        logger.exception(f"oauth nudge send failed for {user_name}")
+
+
+def _record_token_ok(user_name: str) -> None:
+    """Mark this user's token as healthy so the next failure re-triggers a nudge."""
+    import time as _time
+    _TOKEN_STATE[user_name] = ("ok", _time.time())
+
+
 # ─── Background sync loop ────────────────────────────────────────────────
 async def _sync_loop() -> None:
     import asyncio
+    first_pass = True
     while True:
         try:
             users = list_linked_users()
             for u in users:
+                user_name = u["user_name"]
                 try:
-                    await asyncio.to_thread(sync_calendar_for, u["user_name"])
+                    # Check token health regardless of sync outcome so we
+                    # nudge on refresh_failed even if sync would silently skip.
+                    _, status = await asyncio.to_thread(
+                        get_credentials_with_status, user_name
+                    )
+                    if status == "ok":
+                        _record_token_ok(user_name)
+                        await asyncio.to_thread(sync_calendar_for, user_name)
+                    elif status.startswith("refresh_failed"):
+                        # Don't nudge on the very first cold-start pass — we
+                        # don't know whether this is a long-standing failed
+                        # state or a fresh flip. Only nudge on subsequent
+                        # passes (or after we've seen ok at least once).
+                        last = _TOKEN_STATE.get(user_name)
+                        if not first_pass or (last and last[0] == "ok"):
+                            await _send_oauth_nudge(user_name, status)
                 except Exception as e:
-                    logger.warning(f"sync error for {u['user_name']}: {e}")
+                    logger.warning(f"sync error for {user_name}: {e}")
         except Exception as e:
             logger.warning(f"sync loop error: {e}")
+        first_pass = False
         await asyncio.sleep(15 * 60)  # 15 min
 
 
