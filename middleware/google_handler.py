@@ -319,12 +319,16 @@ def _derive_person(calendar_summary: str, account_user_name: str) -> str:
     return account_user_name
 
 
-def sync_calendar_for(user_name: str, days_ahead: int = 14) -> dict:
+def sync_calendar_for(
+    user_name: str,
+    days_ahead: int = 90,
+    days_back: int = 30,
+) -> dict:
     svc = calendar_service(user_name)
     if not svc:
         return {"ok": False, "error": "no credentials"}
     now = datetime.now(timezone.utc)
-    time_min = now.isoformat()
+    time_min = (now - timedelta(days=days_back)).isoformat()
     time_max = (now + timedelta(days=days_ahead)).isoformat()
 
     # Iterate every calendar this account can see (owned, writer, reader).
@@ -405,13 +409,13 @@ def sync_calendar_for(user_name: str, days_ahead: int = 14) -> dict:
                 rows,
             )
 
-    # Drop events that fell out of the window OR that we own but no longer see (deleted/moved out).
+    # Prune anything outside the sync window OR not seen in this round.
+    # days_back kept on the floor so we don't perpetually grow the table.
     with _conn() as c, c.cursor() as cur:
         cur.execute(
             "DELETE FROM calendar_events WHERE user_name = %s AND starts_at < %s",
-            (user_name, now - timedelta(days=1)),
+            (user_name, now - timedelta(days=days_back)),
         )
-        # Stale-prune: if we have an event ID that wasn't returned this sync, drop it.
         cur.execute(
             "DELETE FROM calendar_events WHERE user_name = %s AND last_synced < NOW() - interval '5 minutes'",
             (user_name,),
