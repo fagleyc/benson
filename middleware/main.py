@@ -54,6 +54,9 @@ app.include_router(google_router)
 from scheduled_actions import ensure_schema as _sa_ensure_schema, start_worker as start_scheduler
 from self_modify import ensure_autofix_schema as _autofix_ensure_schema
 
+from music_handler import router as music_router, ensure_schema as _music_ensure_schema
+app.include_router(music_router)
+
 from camera_handler import router as camera_router
 app.include_router(camera_router)
 
@@ -73,6 +76,7 @@ async def _signal_startup():
     start_google_sync()
     _sa_ensure_schema()
     _autofix_ensure_schema()
+    _music_ensure_schema()
     start_scheduler()
     from wyoming_kokoro import start as start_wyoming_kokoro
     start_wyoming_kokoro()

@@ -458,17 +458,33 @@ async def run_agent(
             # because the CLI prints them on stdout (which the SDK's
             # stream-json parser then chokes on). Pull the last error
             # lines so we finally see what's actually breaking.
+            # Capture the CLI debug log around the crash. Filtering only
+            # on [ERROR] missed the 2026-05-25 12:54 crash class entirely
+            # (the CLI exited 1 right after a successful Bash tool
+            # dispatch — no [ERROR] line in the log). New strategy:
+            # always include the last 30 lines verbatim, AND any [ERROR]
+            # lines from the whole log, AND any line containing "exit"
+            # or "panic" or "abort".
             debug_tail = ""
             try:
                 if sdk_debug_log.exists():
                     raw = sdk_debug_log.read_text(errors="replace")
+                    lines = raw.splitlines()
                     err_lines = [
-                        ln for ln in raw.splitlines()
-                        if "[ERROR]" in ln or "API error" in ln or "API Error" in ln
+                        ln for ln in lines
+                        if any(k in ln for k in (
+                            "[ERROR]", "API error", "API Error",
+                            "exit", "panic", "abort", "Stall",
+                        ))
                     ]
-                    debug_tail = "\n".join(err_lines[-10:]) or raw.splitlines()[-10:][-10:]
-                    if isinstance(debug_tail, list):
-                        debug_tail = "\n".join(debug_tail)
+                    tail = lines[-30:]
+                    combined = []
+                    if err_lines:
+                        combined.append("--- matched lines ---")
+                        combined.extend(err_lines[-20:])
+                    combined.append("--- last 30 lines ---")
+                    combined.extend(tail)
+                    debug_tail = "\n".join(combined)
             except Exception as read_e:
                 debug_tail = f"(could not read debug log: {read_e})"
 
