@@ -41,6 +41,15 @@ _ROOM_ZONES: dict[str, list[str]] = {
 DEFAULT_CHAIN = ["media_player.move", "media_player.kitchen", "media_player.family_room"]
 
 
+# Room → on-device satellite output (assist_satellite.* entity).
+# Used to keep voice replies private to the satellite that woke us, even
+# when its room's Sonos is grouped into a music station. Sonos routing
+# (pick_speak_zone) remains the fallback for unmiced rooms.
+SATELLITES: dict[str, str] = {
+    "kitchen": "assist_satellite.respeaker_kitchen_assist_satellite",
+}
+
+
 def _normalize_room(room: str | None) -> str:
     if not room:
         return ""
@@ -79,3 +88,30 @@ async def pick_speak_zone(room: str | None) -> tuple[str | None, list[str]]:
     chain = candidates_for_room(room)
     chosen = await first_available(chain)
     return chosen, chain
+
+
+def satellite_for_room(room: str | None) -> str | None:
+    """Return the assist_satellite entity bound to this room, or None."""
+    norm = _normalize_room(room)
+    if not norm:
+        return None
+    return SATELLITES.get(norm)
+
+
+async def pick_satellite_output(
+    room: str | None, satellite_id: str | None
+) -> str | None:
+    """Pick an on-device satellite output for the voice-reply path.
+
+    Prefers an explicit `satellite_id` (when it's a non-empty
+    `assist_satellite.*` entity); otherwise falls back to the room→
+    satellite mapping. Does not probe availability — assist_satellite
+    entities sit in 'idle'/'listening' and won't read as 'unavailable'
+    the way Sonos zones do; if the caller cares, let `announce`
+    surface the error.
+    """
+    if satellite_id and isinstance(satellite_id, str):
+        sid = satellite_id.strip()
+        if sid.startswith("assist_satellite."):
+            return sid
+    return satellite_for_room(room)

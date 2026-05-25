@@ -35,7 +35,7 @@ from ha_intents import (
 from hub import router as hub_router
 from instacart import InstacartClient
 from memory import MemoryStore
-from output_routing import pick_speak_zone
+from output_routing import pick_satellite_output, pick_speak_zone
 from recipes import RecipeIngester
 
 configure_logging()
@@ -125,6 +125,12 @@ async def handle_conversation(request: Request) -> dict[str, Any]:
     # the user via the appropriate Sonos zone (chosen by output_routing).
     voice_input = bool(data.get("voice_input", False))
     output_zone_override = data.get("output_zone")  # e.g. "media_player.kitchen"
+    # When a request comes from a satellite (assist_satellite.*), prefer
+    # its on-device speaker so a grouped-Sonos music station in the same
+    # room doesn't get interrupted by the TTS reply. The HA conversation
+    # agent should plumb this through; absent that, output_routing falls
+    # back to the room→satellite mapping.
+    satellite_id = data.get("satellite_id") or None
 
     # Try a direct HA-control intent first.
     intent = detect_intent(user_text)
@@ -198,10 +204,17 @@ async def handle_conversation(request: Request) -> dict[str, Any]:
         system_prompt=_system_prompt(),
     )
 
-    # Voice-input → also speak the response on the room's Sonos.
+    # Voice-input → speak the response. Preference order:
+    #   1) explicit output_zone_override (admin / debugging),
+    #   2) the satellite that woke us (keeps reply off grouped Sonos),
+    #   3) the room's Sonos zone (unmiced rooms / hub).
     spoken_on: str | None = None
     if voice_input:
         target = output_zone_override
+        if not target:
+            target = await pick_satellite_output(room, satellite_id)
+            if target:
+                logger.info(f"voice-output via satellite: {target}")
         if not target:
             target, _chain = await pick_speak_zone(room)
         if target:

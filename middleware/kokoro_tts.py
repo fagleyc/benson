@@ -126,9 +126,41 @@ async def speak_on_zone(zone_entity_id: str, message: str) -> dict:
       - agent_tools.announce
       - ha_intents announce Action
       - main.py voice_input post-response TTS
+
+    Dispatches by entity domain:
+      - assist_satellite.* → assist_satellite.announce (on-device TTS),
+        used by the voice-reply path so a satellite whose room's Sonos
+        is grouped into a music station doesn't broadcast TTS across
+        the whole group.
+      - media_player.*    → Kokoro synth + media_player.play_media (Sonos).
     """
     from ha_client import call_service as ha_call_service, get_state as ha_get_state
     from voice_config import load as load_voice_cfg
+
+    domain = (zone_entity_id or "").split(".", 1)[0]
+
+    # On-device satellite path — let HA's assist_satellite.announce run
+    # the announcement through the satellite's own speaker.
+    if domain == "assist_satellite":
+        try:
+            await ha_call_service(
+                "assist_satellite",
+                "announce",
+                {"entity_id": zone_entity_id, "message": message},
+                timeout_s=30,
+            )
+        except Exception as e:
+            logger.warning(f"assist_satellite.announce failed on {zone_entity_id}: {e}")
+            return {"ok": False, "error": f"assist_satellite.announce failed: {e}"}
+        return {
+            "ok": True,
+            "zone": zone_entity_id,
+            "engine": "assist_satellite_announce",
+            "spoken": message,
+        }
+
+    if domain != "media_player":
+        return {"ok": False, "error": f"unsupported output domain: {zone_entity_id}"}
 
     # Precondition: zone available?
     try:
