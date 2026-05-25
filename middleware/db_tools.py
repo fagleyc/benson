@@ -100,7 +100,7 @@ def _chores_block(user_text: str) -> str:
                 tick = "[done]" if r["done"] else "[open]"
                 lines.append(f"  {tick} {r['chore_name']}")
             return "\n".join(lines)
-        # No person specified — summarize per-person counts for today.
+        # No person specified — summarize per-person counts for today. (tier-1 test)
         cur.execute(
             """
             SELECT person, count(*) FILTER (WHERE NOT done) AS open,
