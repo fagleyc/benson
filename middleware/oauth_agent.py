@@ -142,11 +142,35 @@ def _relevant_ltm(user_text: str, k: int = 5, max_distance: float = 0.30) -> str
 def _build_system_prompt(
     base: str, *, speaker: str | None, room: str | None,
     user_text: str = "",
+    output_channel: str = "hub",
+    satellite_id: str | None = None,
 ) -> str:
     now = datetime.now().strftime("%A, %Y-%m-%d %H:%M %Z")
+    # Output channel tells the agent who will speak the reply aloud.
+    #   satellite — HA's Assist pipeline already plays TTS on the device.
+    #     DO NOT call announce(); it would double-play.
+    #   sonos     — caller will speak via kokoro/Sonos after we return.
+    #     A short reply is enough; calling announce() also double-plays.
+    #   signal    — typed channel. No TTS.
+    #   hub       — typed channel. No TTS unless the user asked.
+    channel_rules = {
+        "satellite": (
+            f"HA's Assist pipeline will speak this reply through the kitchen "
+            f"satellite ({satellite_id or 'assist_satellite.respeaker_kitchen_assist_satellite'}). "
+            f"Reply with the spoken text only; DO NOT call announce() — that "
+            f"plays a second time on Sonos."
+        ),
+        "sonos": (
+            "The caller will speak this reply on Sonos after you return. "
+            "Reply with the spoken text only; DO NOT call announce()."
+        ),
+        "signal": "Typed reply over Signal. Don't TTS.",
+        "hub":    "Typed reply in the web hub chat. Don't TTS.",
+    }
     addendum = (
         f"\n\n--- session context ---\n"
         f"Current speaker: {speaker or 'unknown'}.\n"
+        f"Output channel: {output_channel} — {channel_rules.get(output_channel, channel_rules['hub'])}\n"
         f"Time: {now}.\n"
         "Conversation history is unified per speaker — every channel this "
         "person uses (hub web chat, Signal DM, Signal group, voice on Sonos) "
@@ -325,6 +349,8 @@ async def run_agent(
     speaker: str | None,
     room: str | None,
     system_prompt: str,
+    output_channel: str = "hub",
+    satellite_id: str | None = None,
     # 240s previously caused TimeoutError when the outer agent called
     # propose_change (which spawns its own 900s Opus SDK session). The
     # outer wall would hit before the inner finished, leaving an empty
@@ -350,7 +376,8 @@ async def run_agent(
             user_text, recent_failures=recent_fail
         )
         sys_prompt = _build_system_prompt(
-            system_prompt, speaker=speaker, room=room, user_text=user_text
+            system_prompt, speaker=speaker, room=room, user_text=user_text,
+            output_channel=output_channel, satellite_id=satellite_id,
         )
 
         # Capture the bundled CLI's stderr AND its --debug-file output.

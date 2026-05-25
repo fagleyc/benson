@@ -197,6 +197,22 @@ async def handle_conversation(request: Request) -> dict[str, Any]:
         await memory.log_conversation(speaker, room, user_text, logged_response, tier)
         return {"response": response, "tier": tier}
 
+    # Derive the output channel so the agent can suppress double-TTS:
+    #   - satellite: HA's Assist pipeline plays it (voice_input=False from
+    #     benson_agent + a satellite_id present)
+    #   - sonos:     this handler will play via speak_on_zone after return
+    #     (voice_input=True from web hub / Signal voice)
+    #   - signal:    typed reply over Signal (room=None, voice_input=False)
+    #   - hub:       typed reply in browser (room=None, voice_input=False)
+    if satellite_id:
+        output_channel = "satellite"
+    elif voice_input:
+        output_channel = "sonos"
+    elif speaker and not room:
+        output_channel = "signal"
+    else:
+        output_channel = "hub"
+
     # Chat path → Claude agent (tools + sessions). Falls back to Ollama on
     # Anthropic API failure inside run_agent.
     response, tier, _meta = await run_agent(
@@ -204,6 +220,8 @@ async def handle_conversation(request: Request) -> dict[str, Any]:
         speaker=speaker,
         room=room,
         system_prompt=_system_prompt(),
+        output_channel=output_channel,
+        satellite_id=satellite_id,
     )
 
     # Voice-input → speak the response. Preference order:

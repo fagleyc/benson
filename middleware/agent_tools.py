@@ -382,7 +382,10 @@ async def stop_music(room: str, action: str = "pause") -> dict:
 
 @_register(
     "set_volume",
-    "Set Sonos zone volume (0.0-1.0).",
+    "Set the volume on any media_player (Sonos zone OR the kitchen "
+    "ReSpeaker satellite). Pass an HA entity_id and a 0.0-1.0 level. "
+    "For the satellite: media_player.respeaker_kitchen for music, "
+    "media_player.respeaker_kitchen_media_player for TTS/announce volume.",
     {
         "type": "object",
         "properties": {
