@@ -1365,7 +1365,7 @@ def autofix_revert(audit_id: int, reverted_by: str = "casey") -> dict:
             continue
         try:
             subprocess.check_output(
-                ["python", "-m", "py_compile", str(fp)],
+                [sys.executable, "-m", "py_compile", str(fp)],
                 stderr=subprocess.STDOUT,
                 timeout=15,
             )
