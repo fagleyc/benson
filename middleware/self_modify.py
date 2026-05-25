@@ -1114,6 +1114,9 @@ def _autofix_sync(rationale: str, files: list[dict]) -> dict:
                 f"{e.output.decode('utf-8', errors='replace')[:300]}"
             )
             break
+        except Exception as e:
+            compile_err = f"py_compile invocation failed on {p['rel']}: {type(e).__name__}: {e}"
+            break
 
     if compile_err is None:
         tests_dir = REPO_DIR / "middleware" / "tests"
@@ -1131,6 +1134,8 @@ def _autofix_sync(rationale: str, files: list[dict]) -> dict:
                 )
             except FileNotFoundError:
                 pass
+            except Exception as e:
+                compile_err = f"pytest invocation failed: {type(e).__name__}: {e}"
 
     if compile_err is not None:
         for p in plan:
