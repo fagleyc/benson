@@ -38,6 +38,7 @@ import logging
 import os
 import re
 import subprocess
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -1103,7 +1104,7 @@ def _autofix_sync(rationale: str, files: list[dict]) -> dict:
     for p in py_files:
         try:
             subprocess.check_output(
-                ["python", "-m", "py_compile", str(p["path"])],
+                [sys.executable, "-m", "py_compile", str(p["path"])],
                 stderr=subprocess.STDOUT,
                 timeout=15,
             )
@@ -1119,7 +1120,7 @@ def _autofix_sync(rationale: str, files: list[dict]) -> dict:
         if tests_dir.exists():
             try:
                 subprocess.check_output(
-                    ["python", "-m", "pytest", str(tests_dir), "-q"],
+                    [sys.executable, "-m", "pytest", str(tests_dir), "-q"],
                     stderr=subprocess.STDOUT,
                     timeout=120,
                 )
