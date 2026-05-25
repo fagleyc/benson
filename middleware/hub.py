@@ -666,6 +666,17 @@ def _gather_benson_admin_sync() -> dict:
     except Exception:
         out["proposals_merged"] = []
 
+    # Recent Tier 1 autonomous changes
+    try:
+        from self_modify import autofix_list, autofix_remote_commit_url
+        autofixes = autofix_list(limit=20)
+        for af in autofixes:
+            af["commit_url"] = autofix_remote_commit_url(af["commit_sha"])
+        out["autofixes"] = autofixes
+    except Exception as e:
+        logger.warning(f"autofix_list failed: {e}")
+        out["autofixes"] = []
+
     # Recent tool failures (per-speaker, last 10 min)
     try:
         from oauth_agent import recent_failures_snapshot
@@ -809,6 +820,16 @@ async def proposal_reject(branch: str):
     if not branch.startswith("proposal/"):
         raise HTTPException(status_code=400, detail="not a proposal branch")
     return await asyncio.to_thread(reject_proposal, branch)
+
+
+# ─── Tier 1 autonomous changes ───────────────────────────────────────────
+@router.post("/admin/benson/autofix/{audit_id:int}/revert")
+async def autofix_revert_endpoint(audit_id: int):
+    from fastapi.responses import JSONResponse
+    from self_modify import autofix_revert
+    result = await asyncio.to_thread(autofix_revert, audit_id)
+    status = result.pop("status", 200 if result.get("ok") else 400)
+    return JSONResponse(result, status_code=status)
 
 
 def _html_escape(s: str) -> str:

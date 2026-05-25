@@ -2566,6 +2566,75 @@ async def _tool_propose_change(rationale: str, instructions: str) -> dict:
     return await propose_change(rationale=rationale, instructions=instructions)
 
 
+@_register(
+    "autofix",
+    "Tier 1 autonomous fix: apply a TRIVIAL edit directly — no review, "
+    "no propose_change branch, just commit + audit. Use ONLY for: comment "
+    "tweaks, docstring rewording, log/warning string text, Markdown copy "
+    "edits, whitespace. Strict eligibility: ≤5 files, ≤20 added+removed "
+    "lines, no blocklisted paths (oauth_agent, main, agent_tools, "
+    "self_modify, benson_prompt, wyoming_*, scheduled_actions*, "
+    "middleware/sql/, ha/, microwakeword/models/, voiceprint.py), no AST "
+    "structural change (no new imports/defs/control flow). If the rule "
+    "engine rejects (returns ok=false), fall through to propose_change. "
+    "Each file entry passes a unique `find` substring + the `replace` "
+    "string; `find` must appear exactly once. Casey gets a Signal nudge "
+    "and can revert from /admin/benson.",
+    {
+        "type": "object",
+        "properties": {
+            "rationale": {
+                "type": "string",
+                "description": (
+                    "One short line. Becomes the commit subject + Signal "
+                    "nudge text + dashboard row title. Plain prose, not a slug."
+                ),
+            },
+            "files": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 5,
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "path": {
+                            "type": "string",
+                            "description": (
+                                "Path under /opt/benson. Must live in "
+                                "middleware/, microwakeword/scripts/, "
+                                "scripts/, or docs/."
+                            ),
+                        },
+                        "find": {
+                            "type": "string",
+                            "description": (
+                                "Exact substring to locate (include enough "
+                                "surrounding context so it's unique in the "
+                                "file). Tool rejects if not found OR if it "
+                                "appears more than once."
+                            ),
+                        },
+                        "replace": {
+                            "type": "string",
+                            "description": "Replacement substring.",
+                        },
+                    },
+                    "required": ["path", "find", "replace"],
+                },
+                "description": (
+                    "Per-file find/replace blocks. All edits apply atomically: "
+                    "if any one fails validation, none land."
+                ),
+            },
+        },
+        "required": ["rationale", "files"],
+    },
+)
+async def _tool_autofix(rationale: str, files: list[dict]) -> dict:
+    from self_modify import autofix
+    return await autofix(rationale=rationale, files=files)
+
+
 # ─── Persistent scheduler ─────────────────────────────────────────────────
 @_register(
     "schedule_job",

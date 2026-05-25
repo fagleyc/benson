@@ -96,6 +96,81 @@
   </div>
 </div>
 
+<!-- ─── Autonomous changes (Tier 1) ───────────────────────────────── -->
+<div class="card bg-dark border-secondary p-3 mb-3">
+  <div class="d-flex justify-content-between align-items-center mb-2">
+    <h5 class="mb-0">Autonomous changes (Tier 1)
+      <span class="text-secondary small fw-normal">— trivial fixes Benson applied directly</span></h5>
+    <span class="text-secondary small">{{ autofixes|length }} row{% if autofixes|length != 1 %}s{% endif %}</span>
+  </div>
+  {% if not autofixes %}
+    <div class="text-secondary small fst-italic">
+      None yet. Benson uses this lane for comment / docstring / log-string /
+      Markdown edits — ≤5 files, ≤20 lines, no AST change. Anything bigger
+      goes through propose_change.
+    </div>
+  {% else %}
+    <table class="table table-dark table-sm align-middle mb-0" style="font-size:.875rem">
+      <thead>
+        <tr>
+          <th class="text-nowrap">When</th>
+          <th>Rationale</th>
+          <th>Commit</th>
+          <th>Paths</th>
+          <th class="text-nowrap">Diff</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for a in autofixes %}
+        <tr id="autofix-row-{{ a.id }}">
+          <td class="text-secondary text-nowrap">{{ a.created_at[:16] }}</td>
+          <td class="text-light">{{ a.rationale }}</td>
+          <td class="text-nowrap">
+            {% if a.commit_url %}
+              <a href="{{ a.commit_url }}" target="_blank" class="text-warning"><code>{{ a.commit_sha_short }}</code></a>
+            {% else %}
+              <code class="text-warning">{{ a.commit_sha_short }}</code>
+            {% endif %}
+          </td>
+          <td>
+            {% for p in a.paths %}<code class="d-block small">{{ p }}</code>{% endfor %}
+          </td>
+          <td class="text-nowrap small">
+            <span class="text-success">+{{ a.diff_added }}</span>
+            <span class="text-danger">-{{ a.diff_removed }}</span>
+          </td>
+          <td class="text-end">
+            {% if a.reverted_at %}
+              <span class="badge bg-secondary" title="reverted by {{ a.reverted_by }} via {{ a.revert_commit_short }}">reverted</span>
+            {% else %}
+              <button class="btn btn-sm btn-outline-danger"
+                      onclick="revertAutofix({{ a.id }})">Revert</button>
+            {% endif %}
+            <div id="autofix-result-{{ a.id }}" class="small mt-1"></div>
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  {% endif %}
+</div>
+<script>
+async function revertAutofix(id) {
+  if (!confirm('Revert autofix #' + id + '? This creates a new commit on main.')) return;
+  const result = document.getElementById('autofix-result-' + id);
+  result.innerHTML = '<span class="text-secondary">reverting…</span>';
+  const r = await fetch('/admin/benson/autofix/' + id + '/revert', {method:'POST'});
+  const j = await r.json();
+  if (j.ok) {
+    result.innerHTML = '<span class="text-success">reverted</span>';
+    setTimeout(() => location.reload(), 1200);
+  } else {
+    result.innerHTML = '<span class="text-danger">✗ ' + (j.error || 'failed') + '</span>';
+  }
+}
+</script>
+
 <!-- ─── Proposals at a glance ─────────────────────────────────────── -->
 <div class="card bg-dark border-secondary p-3 mb-3">
   <div class="d-flex justify-content-between align-items-center mb-2">

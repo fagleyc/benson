@@ -1,6 +1,6 @@
 """Self-awareness + self-modification primitives for Benson.
 
-Three families of tools:
+Four families of tools:
 
   AWARENESS (read-only)
     - read_my_conversations(days_back, search?) → recent turns from
@@ -16,6 +16,16 @@ Three families of tools:
       and commit to a `proposal/<timestamp>-<slug>` branch. Returns
       branch name + summary. Casey reviews on /admin/proposals and
       clicks "merge" to actually apply.
+
+  TIER 1 AUTONOMY (applies + commits directly, audited)
+    - autofix(rationale, files=[{path, find, replace}]) → for trivial
+      comment / docstring / log-string / markdown edits only. Validates
+      the diff is ≤5 files, ≤20 lines, no blocklisted paths, no AST
+      structural change, then applies + commits + audits + Signal-nudges
+      Casey. Anything beyond the trivial class falls through to
+      propose_change.
+    - autofix_list / autofix_revert → audit-trail surface for the
+      /admin/benson dashboard.
 
 The apply path lives in scripts/apply_proposal.sh — it fast-forwards
 the proposal branch to main, syntax-checks, and restarts benson via
@@ -750,3 +760,642 @@ def _query(sql: str, params: tuple = ()) -> list[dict]:
     with psycopg2.connect(**PG_DSN) as conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
         cur.execute(sql, params)
         return [dict(r) for r in cur.fetchall()]
+
+
+# ─── Tier 1 autonomous fix ───────────────────────────────────────────────
+import ast as _ast
+
+# Allowed roots for autofix targets. Anything outside these refuses.
+_TIER1_ALLOWED_ROOTS = (
+    REPO_DIR / "middleware",
+    REPO_DIR / "microwakeword" / "scripts",
+    REPO_DIR / "scripts",
+    REPO_DIR / "docs",
+)
+
+# Paths that must NEVER be touched autonomously. Expand as needed; keep
+# in code (not config) so the rules ship with the binary.
+TIER1_BLOCKLIST: list[str] = [
+    "middleware/oauth_agent.py",
+    "middleware/main.py",
+    "middleware/benson_mcp.py",
+    "middleware/benson_prompt.txt",
+    "middleware/agent_tools.py",
+    "middleware/self_modify.py",
+    "middleware/voiceprint.py",
+]
+
+# Prefix-based blocks (any path starting with one of these is refused).
+_TIER1_BLOCKED_PREFIXES: tuple[str, ...] = (
+    "middleware/wyoming_",
+    "middleware/scheduled_actions",
+    "middleware/sql/",
+    "ha/",
+    "microwakeword/models/",
+)
+
+_TIER1_MAX_FILES = 5
+_TIER1_MAX_LINES = 20
+_AUTOFIX_SCHEMA_PATH = Path(__file__).parent / "sql" / "autonomous_changes.sql"
+_AUTOFIX_LOCK: asyncio.Lock | None = None
+_CASEY_SIGNAL_NUMBER = "+15056208470"
+
+
+def _autofix_lock() -> asyncio.Lock:
+    global _AUTOFIX_LOCK
+    if _AUTOFIX_LOCK is None:
+        _AUTOFIX_LOCK = asyncio.Lock()
+    return _AUTOFIX_LOCK
+
+
+def ensure_autofix_schema() -> None:
+    try:
+        sql = _AUTOFIX_SCHEMA_PATH.read_text()
+    except FileNotFoundError:
+        logger.error(f"autonomous_changes schema missing at {_AUTOFIX_SCHEMA_PATH}")
+        return
+    try:
+        with psycopg2.connect(**PG_DSN) as conn, conn.cursor() as cur:
+            cur.execute(sql)
+            conn.commit()
+    except Exception:
+        logger.exception("autonomous_changes: ensure_schema failed")
+
+
+def _tier1_resolve(path: str) -> tuple[Path | None, str | None]:
+    """Resolve a user-supplied path against REPO_DIR. Returns (resolved_path,
+    error) — exactly one is None. Refuses absolute paths outside the repo,
+    symlink escapes, blocklisted paths, and paths outside allowed roots."""
+    p = Path(path)
+    if not p.is_absolute():
+        p = REPO_DIR / path
+    try:
+        resolved = p.resolve()
+    except Exception as e:
+        return None, f"cannot resolve {path!r}: {e}"
+    repo_resolved = REPO_DIR.resolve()
+    try:
+        rel = resolved.relative_to(repo_resolved)
+    except ValueError:
+        return None, f"refusing path outside /opt/benson: {resolved}"
+    rel_str = str(rel)
+    if rel_str in TIER1_BLOCKLIST:
+        return None, f"blocklist: {rel_str}"
+    for pfx in _TIER1_BLOCKED_PREFIXES:
+        if rel_str.startswith(pfx):
+            return None, f"blocklist prefix {pfx!r}: {rel_str}"
+    # Must live under one of the allowed roots.
+    allowed = False
+    for root in _TIER1_ALLOWED_ROOTS:
+        try:
+            resolved.relative_to(root.resolve())
+            allowed = True
+            break
+        except ValueError:
+            continue
+    if not allowed:
+        return None, (
+            f"outside Tier 1 allowed roots (middleware/, microwakeword/scripts/, "
+            f"scripts/, docs/): {rel_str}"
+        )
+    return resolved, None
+
+
+_LOG_CALL_RE = re.compile(
+    r"^\s*(?:logger|log|logging)\.(?:debug|info|warning|error|exception|critical)\s*\("
+)
+_STRING_LIT_FMT_RE = re.compile(r"%[sdifr]|\{[^{}]*\}")
+
+
+def _classify_line(line: str) -> str:
+    """Return a one-word classification for a source line. Used by the
+    pre-edit check to reject anything that isn't pure prose/whitespace
+    BEFORE we even consider AST-equivalence. Classes:
+      'blank', 'comment', 'docstring_marker', 'in_block',
+      'logger_string', 'markdown', 'html_comment', 'jinja_comment',
+      'code'.
+    The autofix policy only accepts pre/post pairs where BOTH lines are
+    non-'code'.
+    """
+    stripped = line.strip()
+    if not stripped:
+        return "blank"
+    if stripped.startswith("#"):
+        return "comment"
+    if stripped.startswith('"""') or stripped.startswith("'''"):
+        return "docstring_marker"
+    if stripped.startswith("{#") or stripped.endswith("#}"):
+        return "jinja_comment"
+    if stripped.startswith("<!--") or stripped.endswith("-->"):
+        return "html_comment"
+    if _LOG_CALL_RE.match(line):
+        return "logger_string"
+    # Bare markdown bullet / heading / paragraph: only safe to classify
+    # this way when the file is *.md (caller checks suffix).
+    return "code"
+
+
+def _diffstat(before: str, after: str) -> tuple[int, int]:
+    """Return (added, removed) line counts comparing two file contents."""
+    import difflib as _difflib
+    a = before.splitlines()
+    b = after.splitlines()
+    added = removed = 0
+    for line in _difflib.unified_diff(a, b, lineterm=""):
+        if line.startswith("+++") or line.startswith("---"):
+            continue
+        if line.startswith("+"):
+            added += 1
+        elif line.startswith("-"):
+            removed += 1
+    return added, removed
+
+
+def _ast_dump_stripped(src: str) -> str:
+    """Parse `src` and return an AST dump with all string-literal Constant
+    values and docstring positions normalized away — so two files that
+    differ only in string contents / docstrings / comments produce the
+    same dump. Whitespace and comments are already invisible to ast.
+    """
+    tree = _ast.parse(src)
+    # Strip every Constant.value (str/bytes only) so log-string and
+    # docstring edits don't show up; numbers/booleans MUST still be
+    # compared (they're real semantics).
+    for node in _ast.walk(tree):
+        if isinstance(node, _ast.Constant) and isinstance(node.value, (str, bytes)):
+            node.value = ""
+    return _ast.dump(tree, include_attributes=False)
+
+
+def _validate_line_classes(before: str, after: str, suffix: str) -> str | None:
+    """Walk the unified diff and ensure every changed line is non-'code'
+    per _classify_line. Returns None on success, or an error string."""
+    import difflib as _difflib
+    a = before.splitlines()
+    b = after.splitlines()
+    is_md = suffix.lower() == ".md"
+    is_html = suffix.lower() in (".html", ".jinja", ".j2")
+    for line in _difflib.unified_diff(a, b, lineterm=""):
+        if line.startswith("+++") or line.startswith("---") or line.startswith("@@"):
+            continue
+        if not line.startswith(("+", "-")):
+            continue
+        body = line[1:]
+        cls = _classify_line(body)
+        if cls != "code":
+            continue
+        # Markdown files: any prose line is fair game.
+        if is_md:
+            continue
+        # HTML/Jinja templates: prose between tags is fine; the AST check
+        # below doesn't run on these (no .py). Allow.
+        if is_html:
+            continue
+        # Whitespace-only changes (e.g. trailing-space cleanup that produced
+        # an empty rstrip on one side) — _classify_line already returns
+        # 'blank' for that, so reaching here means it's real code.
+        return f"non-trivial change in {suffix} file: {body.rstrip()[:160]!r}"
+    return None
+
+
+async def autofix(rationale: str, files: list[dict]) -> dict:
+    """Tier 1 autonomous fix: apply per-file find/replace edits directly,
+    commit, audit. Refuses anything that isn't a pure prose / comment /
+    log-string / docstring / markdown change. See module docstring for
+    the full eligibility rules.
+
+    `files` is a list of {path, find, replace}. `find` must appear
+    exactly once in the file. All edits are validated against the same
+    rules; if any one fails, NONE are applied.
+    """
+    if not rationale.strip():
+        return {"ok": False, "reason": "rationale is required"}
+    if not isinstance(files, list) or not files:
+        return {"ok": False, "reason": "files must be a non-empty list"}
+    if len(files) > _TIER1_MAX_FILES:
+        return {
+            "ok": False,
+            "reason": f"too many files ({len(files)} > {_TIER1_MAX_FILES})",
+        }
+
+    lock = _autofix_lock()
+    if lock.locked():
+        return {"ok": False, "reason": "another autofix is in flight; retry"}
+
+    async with lock:
+        return await asyncio.to_thread(_autofix_sync, rationale, files)
+
+
+def _autofix_sync(rationale: str, files: list[dict]) -> dict:
+    # ─── 1. Resolve + validate inputs, pre-compute before/after blobs ────
+    plan: list[dict] = []
+    for entry in files:
+        if not isinstance(entry, dict):
+            return {"ok": False, "reason": f"file entry not an object: {entry!r}"}
+        path_in = entry.get("path")
+        find = entry.get("find")
+        replace = entry.get("replace")
+        if not isinstance(path_in, str) or not isinstance(find, str) or not isinstance(replace, str):
+            return {
+                "ok": False,
+                "reason": "each file entry needs string path, find, replace",
+            }
+        resolved, err = _tier1_resolve(path_in)
+        if err:
+            return {"ok": False, "reason": err}
+        try:
+            before = resolved.read_text()
+        except Exception as e:
+            return {"ok": False, "reason": f"read failed for {path_in}: {e}"}
+        occurrences = before.count(find)
+        if occurrences == 0:
+            return {
+                "ok": False,
+                "reason": f"find string not present in {resolved.relative_to(REPO_DIR)}",
+            }
+        if occurrences > 1:
+            return {
+                "ok": False,
+                "reason": (
+                    f"find string appears {occurrences} times in "
+                    f"{resolved.relative_to(REPO_DIR)} — must be unique"
+                ),
+            }
+        after = before.replace(find, replace, 1)
+        if after == before:
+            return {
+                "ok": False,
+                "reason": f"replace equals find for {resolved.relative_to(REPO_DIR)} — no-op",
+            }
+        plan.append(
+            {
+                "path": resolved,
+                "rel": str(resolved.relative_to(REPO_DIR)),
+                "before": before,
+                "after": after,
+                "suffix": resolved.suffix,
+            }
+        )
+
+    # ─── 2. Per-file class + AST checks, cumulative diff budget ──────────
+    total_added = 0
+    total_removed = 0
+    for p in plan:
+        cls_err = _validate_line_classes(p["before"], p["after"], p["suffix"])
+        if cls_err:
+            return {"ok": False, "reason": cls_err}
+        if p["suffix"] == ".py":
+            try:
+                before_ast = _ast_dump_stripped(p["before"])
+                after_ast = _ast_dump_stripped(p["after"])
+            except SyntaxError as e:
+                return {"ok": False, "reason": f"syntax error in {p['rel']}: {e}"}
+            if before_ast != after_ast:
+                return {
+                    "ok": False,
+                    "reason": f"AST structural change in {p['rel']}",
+                }
+        added, removed = _diffstat(p["before"], p["after"])
+        total_added += added
+        total_removed += removed
+    if total_added + total_removed > _TIER1_MAX_LINES:
+        return {
+            "ok": False,
+            "reason": (
+                f"diff exceeds {_TIER1_MAX_LINES}-line cap "
+                f"(+{total_added}/-{total_removed})"
+            ),
+        }
+
+    # ─── 3. Confirm working tree clean + on main ─────────────────────────
+    try:
+        status = _git(["status", "--porcelain"])
+        head = _git(["branch", "--show-current"]).strip()
+    except subprocess.CalledProcessError as e:
+        return {"ok": False, "reason": f"git probe failed: {e.output[:200] if e.output else e}"}
+    if status.strip():
+        return {
+            "ok": False,
+            "reason": f"working tree dirty; refuse to autofix on top: {status[:200]}",
+        }
+    if head != "main":
+        return {"ok": False, "reason": f"not on main (head={head!r})"}
+
+    # ─── 4. Apply edits to disk ──────────────────────────────────────────
+    written: list[Path] = []
+    try:
+        for p in plan:
+            p["path"].write_text(p["after"])
+            written.append(p["path"])
+    except Exception as e:
+        # Best-effort rollback for files we already wrote.
+        for p in plan:
+            try:
+                if p["path"] in written:
+                    p["path"].write_text(p["before"])
+            except Exception:
+                pass
+        return {"ok": False, "reason": f"write failed: {e}"}
+
+    # ─── 5. py_compile each touched .py + pytest if tests dir exists ─────
+    py_files = [p for p in plan if p["suffix"] == ".py"]
+    compile_err: str | None = None
+    for p in py_files:
+        try:
+            subprocess.check_output(
+                ["python", "-m", "py_compile", str(p["path"])],
+                stderr=subprocess.STDOUT,
+                timeout=15,
+            )
+        except subprocess.CalledProcessError as e:
+            compile_err = (
+                f"py_compile failed on {p['rel']}: "
+                f"{e.output.decode('utf-8', errors='replace')[:300]}"
+            )
+            break
+
+    if compile_err is None:
+        tests_dir = REPO_DIR / "middleware" / "tests"
+        if tests_dir.exists():
+            try:
+                subprocess.check_output(
+                    ["python", "-m", "pytest", str(tests_dir), "-q"],
+                    stderr=subprocess.STDOUT,
+                    timeout=120,
+                )
+            except subprocess.CalledProcessError as e:
+                compile_err = (
+                    f"pytest failed: "
+                    f"{e.output.decode('utf-8', errors='replace')[:300]}"
+                )
+            except FileNotFoundError:
+                pass
+
+    if compile_err is not None:
+        for p in plan:
+            try:
+                p["path"].write_text(p["before"])
+            except Exception:
+                pass
+        return {"ok": False, "reason": compile_err}
+
+    # ─── 6. git add + commit ─────────────────────────────────────────────
+    try:
+        _git(["add", *[p["rel"] for p in plan]])
+    except subprocess.CalledProcessError as e:
+        for p in plan:
+            try:
+                p["path"].write_text(p["before"])
+            except Exception:
+                pass
+        return {
+            "ok": False,
+            "reason": f"git add failed: {e.output[:300] if e.output else e}",
+        }
+
+    one_line = rationale.strip().splitlines()[0][:100]
+    commit_msg = (
+        f"autofix: {one_line}\n\n"
+        f"Tier 1 autonomous fix (+{total_added}/-{total_removed}, {len(plan)} file(s)).\n"
+        f"Eligibility: comment/docstring/log-string/markdown only; no AST change.\n\n"
+        f"Co-Authored-By: Benson Tier-1 Autonomous <benson@fagley.home>\n"
+    )
+    try:
+        _git(["commit", "-m", commit_msg])
+        commit_sha = _git(["rev-parse", "HEAD"]).strip()
+    except subprocess.CalledProcessError as e:
+        for p in plan:
+            try:
+                p["path"].write_text(p["before"])
+            except Exception:
+                pass
+        try:
+            _git(["reset", "HEAD"])
+        except Exception:
+            pass
+        return {
+            "ok": False,
+            "reason": f"git commit failed: {e.output[:300] if e.output else e}",
+        }
+
+    # ─── 7. Audit-row insert ─────────────────────────────────────────────
+    try:
+        with psycopg2.connect(**PG_DSN) as conn, conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO autonomous_changes "
+                "(rationale, paths, commit_sha, diff_added, diff_removed) "
+                "VALUES (%s, %s, %s, %s, %s) RETURNING id",
+                (
+                    rationale.strip(),
+                    [p["rel"] for p in plan],
+                    commit_sha,
+                    total_added,
+                    total_removed,
+                ),
+            )
+            audit_id = int(cur.fetchone()[0])
+            conn.commit()
+    except Exception as e:
+        logger.exception("autofix: audit insert failed")
+        # Don't roll back the commit — the change is real; just flag.
+        audit_id = -1
+        logger.warning(f"autofix audit insert failed: {e}")
+
+    # ─── 8. Signal nudge to Casey ────────────────────────────────────────
+    try:
+        from signal_handler import send_signal_message
+        diffstat_str = f"{len(plan)} file{'s' if len(plan) != 1 else ''}, +{total_added}/-{total_removed} lines"
+        nudge = (
+            f"Benson auto-fixed: {one_line} · {diffstat_str} · "
+            f"revert via /admin/benson"
+        )
+        # send_signal_message is async — fire-and-forget on the running loop.
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                asyncio.run_coroutine_threadsafe(
+                    send_signal_message(_CASEY_SIGNAL_NUMBER, nudge), loop
+                )
+            else:
+                loop.run_until_complete(send_signal_message(_CASEY_SIGNAL_NUMBER, nudge))
+        except RuntimeError:
+            asyncio.run(send_signal_message(_CASEY_SIGNAL_NUMBER, nudge))
+    except Exception as e:
+        logger.warning(f"autofix: Signal nudge failed: {e}")
+
+    return {
+        "ok": True,
+        "audit_id": audit_id,
+        "commit_sha": commit_sha,
+        "diffstat": {"added": total_added, "removed": total_removed, "files": len(plan)},
+        "paths": [p["rel"] for p in plan],
+    }
+
+
+def autofix_list(limit: int = 20) -> list[dict]:
+    """Return the most recent autonomous_changes rows for the dashboard."""
+    try:
+        rows = _query(
+            "SELECT id, created_at, rationale, paths, commit_sha, "
+            "diff_added, diff_removed, actor, reverted_at, reverted_by, "
+            "revert_commit FROM autonomous_changes "
+            "ORDER BY id DESC LIMIT %s",
+            (min(int(limit), 200),),
+        )
+    except Exception as e:
+        logger.warning(f"autofix_list failed: {e}")
+        return []
+    out: list[dict] = []
+    for r in rows:
+        out.append(
+            {
+                "id": r["id"],
+                "created_at": r["created_at"].isoformat(timespec="minutes") if r["created_at"] else "",
+                "rationale": r["rationale"],
+                "paths": list(r["paths"] or []),
+                "commit_sha": r["commit_sha"] or "",
+                "commit_sha_short": (r["commit_sha"] or "")[:8],
+                "diff_added": r["diff_added"],
+                "diff_removed": r["diff_removed"],
+                "actor": r["actor"] or "",
+                "reverted_at": r["reverted_at"].isoformat(timespec="minutes") if r["reverted_at"] else None,
+                "reverted_by": r["reverted_by"],
+                "revert_commit": r["revert_commit"] or "",
+                "revert_commit_short": (r["revert_commit"] or "")[:8] if r["revert_commit"] else "",
+            }
+        )
+    return out
+
+
+def _autofix_remote_url() -> str | None:
+    try:
+        url = _git(["remote", "get-url", "origin"]).strip()
+    except Exception:
+        return None
+    # Normalize ssh-style git@github.com:foo/bar.git → https://github.com/foo/bar
+    if url.startswith("git@github.com:"):
+        path = url[len("git@github.com:"):]
+        if path.endswith(".git"):
+            path = path[:-4]
+        return f"https://github.com/{path}"
+    if url.startswith("https://github.com/"):
+        if url.endswith(".git"):
+            url = url[:-4]
+        return url
+    return None
+
+
+def autofix_remote_commit_url(sha: str) -> str | None:
+    base = _autofix_remote_url()
+    if not base or not sha:
+        return None
+    return f"{base}/commit/{sha}"
+
+
+def autofix_revert(audit_id: int, reverted_by: str = "casey") -> dict:
+    """Revert a Tier 1 autonomous change. Resolves the commit_sha from the
+    audit row, `git revert <sha> --no-edit`, runs py_compile on touched
+    files, commits, updates the audit row. If the revert conflicts, leaves
+    the working tree dirty and returns ok=false with status 409 semantics."""
+    try:
+        row = _query(
+            "SELECT id, commit_sha, paths, reverted_at FROM autonomous_changes "
+            "WHERE id = %s",
+            (int(audit_id),),
+        )
+    except Exception as e:
+        return {"ok": False, "status": 500, "error": f"audit lookup failed: {e}"}
+    if not row:
+        return {"ok": False, "status": 404, "error": f"audit id {audit_id} not found"}
+    r = row[0]
+    if r["reverted_at"]:
+        return {
+            "ok": False,
+            "status": 409,
+            "error": f"already reverted at {r['reverted_at'].isoformat()}",
+        }
+    sha = r["commit_sha"]
+    paths = list(r["paths"] or [])
+
+    try:
+        status = _git(["status", "--porcelain"])
+        head = _git(["branch", "--show-current"]).strip()
+    except subprocess.CalledProcessError as e:
+        return {
+            "ok": False,
+            "status": 500,
+            "error": f"git probe failed: {e.output[:200] if e.output else e}",
+        }
+    if status.strip():
+        return {
+            "ok": False,
+            "status": 409,
+            "error": f"working tree dirty; cannot revert: {status[:200]}",
+        }
+    if head != "main":
+        return {"ok": False, "status": 409, "error": f"not on main (head={head!r})"}
+
+    try:
+        _git(["revert", sha, "--no-edit"])
+    except subprocess.CalledProcessError as e:
+        out = e.output.decode() if isinstance(e.output, bytes) else str(e.output)
+        # Conflicted revert → abort to clean state, leave audit row alone.
+        try:
+            _git(["revert", "--abort"])
+        except Exception:
+            pass
+        return {
+            "ok": False,
+            "status": 409,
+            "error": f"git revert failed (likely conflict): {out[:300]}",
+        }
+
+    # py_compile any .py files that were touched, in their reverted state.
+    for rel in paths:
+        if not rel.endswith(".py"):
+            continue
+        fp = REPO_DIR / rel
+        if not fp.exists():
+            continue
+        try:
+            subprocess.check_output(
+                ["python", "-m", "py_compile", str(fp)],
+                stderr=subprocess.STDOUT,
+                timeout=15,
+            )
+        except subprocess.CalledProcessError as e:
+            # Compile failure after revert is very surprising — surface it.
+            return {
+                "ok": False,
+                "status": 500,
+                "error": (
+                    f"py_compile after revert failed on {rel}: "
+                    f"{e.output.decode('utf-8', errors='replace')[:300]}"
+                ),
+            }
+
+    try:
+        revert_sha = _git(["rev-parse", "HEAD"]).strip()
+    except subprocess.CalledProcessError as e:
+        revert_sha = ""
+        logger.warning(f"could not read revert sha: {e}")
+
+    try:
+        with psycopg2.connect(**PG_DSN) as conn, conn.cursor() as cur:
+            cur.execute(
+                "UPDATE autonomous_changes "
+                "SET reverted_at = now(), reverted_by = %s, revert_commit = %s "
+                "WHERE id = %s",
+                (reverted_by, revert_sha, int(audit_id)),
+            )
+            conn.commit()
+    except Exception as e:
+        logger.exception("autofix_revert: audit update failed")
+        return {
+            "ok": True,
+            "status": 200,
+            "revert_commit": revert_sha,
+            "warning": f"revert committed but audit update failed: {e}",
+        }
+
+    return {"ok": True, "status": 200, "revert_commit": revert_sha}
