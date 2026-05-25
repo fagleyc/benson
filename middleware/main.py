@@ -42,6 +42,10 @@ configure_logging()
 logger = logging.getLogger("benson.main")
 
 app = FastAPI(title="Benson Middleware", version="0.1.0")
+# music_router first so its new /api/music/play, /search, /stations endpoints
+# take precedence over the legacy ones in data_api at the same paths.
+from music_handler import router as _music_router_early, ensure_schema as _music_ensure_schema
+app.include_router(_music_router_early)
 app.include_router(data_router)
 app.include_router(hub_router)
 
@@ -53,9 +57,6 @@ app.include_router(google_router)
 
 from scheduled_actions import ensure_schema as _sa_ensure_schema, start_worker as start_scheduler
 from self_modify import ensure_autofix_schema as _autofix_ensure_schema
-
-from music_handler import router as music_router, ensure_schema as _music_ensure_schema
-app.include_router(music_router)
 
 from camera_handler import router as camera_router
 app.include_router(camera_router)

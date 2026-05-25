@@ -200,6 +200,46 @@ async def _ma_entry_id() -> str | None:
     return None
 
 
+# ─── Cover-art proxy ─────────────────────────────────────────────────────
+# Home Assistant returns `entity_picture` as a token-signed relative URL
+# (e.g. `/api/media_player_proxy/media_player.kitchen_2?token=...`). The
+# browser can't fetch that directly from Benson's origin, and it requires
+# the HA auth header anyway. We expose a tiny pass-through so the dashboard
+# can render album art without leaking the HA token to the client.
+@router.get("/api/music/cover")
+async def cover_proxy(entity_id: str):
+    from fastapi.responses import Response
+    import httpx
+    from config import HA_BASE_URL
+    from ha_client import _headers
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.get(
+                f"{HA_BASE_URL}/api/states/{entity_id}",
+                headers=_headers(),
+            )
+        if r.status_code != 200:
+            raise HTTPException(404, "entity not found")
+        attrs = (r.json() or {}).get("attributes", {}) or {}
+        pic = attrs.get("entity_picture")
+        if not pic:
+            raise HTTPException(404, "no entity_picture")
+        url = pic if pic.startswith("http") else f"{HA_BASE_URL}{pic}"
+        async with httpx.AsyncClient(timeout=10) as client:
+            img = await client.get(url, headers=_headers())
+        if img.status_code != 200:
+            raise HTTPException(502, f"upstream {img.status_code}")
+        return Response(
+            content=img.content,
+            media_type=img.headers.get("content-type", "image/jpeg"),
+            headers={"Cache-Control": "public, max-age=300"},
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(502, f"cover proxy failed: {e}")
+
+
 # ─── Now-playing ─────────────────────────────────────────────────────────
 @router.get("/api/music/now-playing")
 async def now_playing() -> dict:
@@ -216,6 +256,12 @@ async def now_playing() -> dict:
             })
             continue
         a = s.get("attributes", {}) or {}
+        # Rewrite HA's signed-but-relative entity_picture URL to a
+        # Benson-served proxy. The browser hits us, we forward to HA with
+        # the long-lived token. Keeps album art working + HA token private.
+        pic = a.get("entity_picture")
+        if pic and pic.startswith("/api/media_player_proxy"):
+            pic = f"/api/music/cover?entity_id={entity}"
         out.append({
             "room": room_id,
             "entity_id": entity,
@@ -225,7 +271,7 @@ async def now_playing() -> dict:
             "media_title": a.get("media_title"),
             "media_artist": a.get("media_artist"),
             "media_album_name": a.get("media_album_name"),
-            "entity_picture": a.get("entity_picture"),
+            "entity_picture": pic,
             "media_position": a.get("media_position"),
             "media_duration": a.get("media_duration"),
             "volume": a.get("volume_level"),

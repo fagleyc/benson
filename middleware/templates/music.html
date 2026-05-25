@@ -1,320 +1,815 @@
 {% extends "layout.html" %}
 {% block title %}Music — Fagley House Hub{% endblock %}
 {% block content %}
-<div class="d-flex justify-content-between align-items-center mb-3">
-  <h2 class="mb-0">🎵 Music</h2>
-  <small class="text-secondary">Apple Music via Music Assistant · routes to any Sonos zone</small>
+<style>
+  /* ─── Music dashboard ─── */
+  .mu-section { margin-bottom: 1.8rem; }
+  .mu-section-header {
+    display: flex; align-items: baseline; justify-content: space-between;
+    margin-bottom: .75rem; gap: 1rem; flex-wrap: wrap;
+  }
+  .mu-section-title {
+    color: #f39c12; font-size: 1.05rem; font-weight: 600;
+    text-transform: uppercase; letter-spacing: .06em; margin: 0;
+  }
+  .mu-section-sub { color: #889; font-size: .82rem; }
+
+  /* Now-playing strip */
+  .mu-np-strip {
+    display: flex; gap: .65rem; overflow-x: auto; padding-bottom: .35rem;
+    scrollbar-width: thin;
+  }
+  .mu-np-card {
+    flex: 0 0 auto; min-width: 280px; max-width: 360px;
+    background: #1a2128; border: 1px solid #2d3a47; border-radius: 8px;
+    padding: .6rem .75rem; display: flex; gap: .6rem; align-items: center;
+  }
+  .mu-np-card.active { border-color: #f39c12; box-shadow: 0 0 0 1px #f39c12 inset; }
+  .mu-np-art {
+    width: 64px; height: 64px; border-radius: 5px; object-fit: cover;
+    background: linear-gradient(135deg,#2a3340,#1f2730);
+    flex: 0 0 64px;
+  }
+  .mu-np-meta { flex: 1 1 auto; min-width: 0; }
+  .mu-np-zone {
+    font-size: .68rem; letter-spacing: .07em; text-transform: uppercase;
+    color: #8a96a3;
+  }
+  .mu-np-zone.playing { color: #7fdb9b; }
+  .mu-np-title {
+    color: #e8ecef; font-weight: 600; font-size: .95rem;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .mu-np-artist {
+    color: #aab3bf; font-size: .82rem;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .mu-np-controls { display: flex; gap: .15rem; flex-direction: column; align-items: stretch; }
+  .mu-np-row { display: flex; gap: .15rem; }
+  .mu-np-btn {
+    background: #2a3340; color: #ddd; border: 1px solid #3a4654;
+    border-radius: 4px; padding: .15rem .45rem; font-size: .85rem;
+    cursor: pointer; min-width: 30px;
+  }
+  .mu-np-btn:hover { background: #34414f; }
+  .mu-np-btn.play { background: #f39c12; color: #1a1a1a; border-color: #f39c12; font-weight: 600; }
+  .mu-np-vol { width: 100%; margin-top: .3rem; }
+
+  /* Library / station grid */
+  .mu-grid {
+    display: grid; gap: .9rem;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  }
+  .mu-grid-wide {
+    display: grid; gap: 1rem;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  }
+  .mu-card {
+    background: #1a2128; border: 1px solid #2d3a47; border-radius: 8px;
+    overflow: hidden; cursor: pointer; transition: transform .15s, border-color .15s;
+    position: relative; display: flex; flex-direction: column;
+  }
+  .mu-card:hover { transform: translateY(-2px); border-color: #f39c12; }
+  .mu-card-cover {
+    aspect-ratio: 1 / 1; background: linear-gradient(135deg,#2a3340,#1f2730);
+    background-size: cover; background-position: center;
+    display: flex; align-items: center; justify-content: center;
+    color: #6c7a8a; font-size: 2.2rem;
+  }
+  .mu-card-body { padding: .55rem .65rem; flex: 1 1 auto; }
+  .mu-card-title {
+    color: #e8ecef; font-weight: 600; font-size: .9rem; line-height: 1.25;
+    overflow: hidden; text-overflow: ellipsis;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  }
+  .mu-card-sub {
+    color: #889; font-size: .76rem; margin-top: .2rem;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .mu-card-menu {
+    position: absolute; top: .35rem; right: .35rem;
+    background: rgba(0,0,0,0.55); color: #fff; border: none;
+    width: 26px; height: 26px; border-radius: 50%;
+    cursor: pointer; font-size: .9rem; line-height: 1;
+    opacity: 0; transition: opacity .15s;
+  }
+  .mu-card:hover .mu-card-menu { opacity: 1; }
+  .mu-card-menu:hover { background: rgba(243,156,18,.8); }
+
+  /* Station card */
+  .mu-station {
+    background: linear-gradient(135deg, var(--from,#34495e), var(--to,#1abc9c));
+    border: 1px solid rgba(255,255,255,.08); border-radius: 10px;
+    padding: 1rem 1.1rem; color: #fff; cursor: pointer;
+    display: flex; flex-direction: column; gap: .35rem;
+    min-height: 165px; position: relative;
+    transition: transform .15s, box-shadow .15s;
+  }
+  .mu-station:hover { transform: translateY(-3px); box-shadow: 0 8px 18px rgba(0,0,0,.35); }
+  .mu-station-name {
+    font-weight: 700; font-size: 1.15rem; letter-spacing: .01em;
+    text-shadow: 0 1px 2px rgba(0,0,0,.45);
+  }
+  .mu-station-seeds {
+    font-size: .82rem; opacity: .88; line-height: 1.3;
+    text-shadow: 0 1px 2px rgba(0,0,0,.5);
+  }
+  .mu-station-tags { display: flex; flex-wrap: wrap; gap: .25rem; margin-top: .3rem; }
+  .mu-station-tag {
+    font-size: .68rem; padding: 1px 7px; border-radius: 9px;
+    background: rgba(0,0,0,.32); color: #fff;
+    text-transform: uppercase; letter-spacing: .05em;
+  }
+  .mu-station-foot {
+    margin-top: auto; display: flex; gap: .4rem; align-items: center;
+    padding-top: .5rem;
+  }
+  .mu-station-play {
+    background: rgba(0,0,0,.45); color: #fff; border: 1px solid rgba(255,255,255,.25);
+    padding: .35rem .85rem; border-radius: 5px; font-weight: 600;
+    font-size: .85rem; cursor: pointer; flex: 1;
+  }
+  .mu-station-play:hover { background: rgba(0,0,0,.65); }
+  .mu-station-del {
+    background: none; border: 1px solid rgba(255,255,255,.18);
+    color: rgba(255,255,255,.7); padding: .25rem .55rem;
+    border-radius: 5px; font-size: .75rem; cursor: pointer;
+  }
+  .mu-station-del:hover { background: rgba(0,0,0,.5); color: #fff; }
+  .mu-station.new {
+    background: #1a2128; border: 2px dashed #3a4654; color: #aab3bf;
+    align-items: center; justify-content: center; min-height: 165px;
+    text-align: center;
+  }
+  .mu-station.new:hover { border-color: #f39c12; color: #f39c12; }
+
+  /* Chips for the builder modal */
+  .mu-chip {
+    display: inline-block; padding: 4px 11px; margin: 3px;
+    background: #2a3340; border: 1px solid #3a4654; border-radius: 14px;
+    color: #ccd; font-size: .82rem; cursor: pointer; transition: all .12s;
+    user-select: none;
+  }
+  .mu-chip:hover { border-color: #f39c12; }
+  .mu-chip.active { background: #f39c12; color: #1a1a1a; border-color: #f39c12; font-weight: 600; }
+
+  .mu-search-wrap { position: relative; }
+  .mu-search-dropdown {
+    position: absolute; z-index: 50; top: 100%; left: 0; right: 0;
+    background: #1a2128; border: 1px solid #2d3a47; border-radius: 6px;
+    margin-top: 4px; max-height: 360px; overflow-y: auto;
+    box-shadow: 0 8px 18px rgba(0,0,0,.45); display: none;
+  }
+  .mu-search-dropdown.show { display: block; }
+  .mu-search-section-label {
+    color: #8a96a3; font-size: .7rem; padding: .35rem .65rem;
+    text-transform: uppercase; letter-spacing: .06em;
+    background: #131820; border-bottom: 1px solid #232c36;
+  }
+  .mu-search-row {
+    display: flex; gap: .5rem; align-items: center;
+    padding: .35rem .65rem; cursor: pointer; border-bottom: 1px solid #1f262e;
+  }
+  .mu-search-row:hover { background: #232c36; }
+  .mu-search-art {
+    width: 36px; height: 36px; object-fit: cover; border-radius: 4px;
+    background: #2a3340; flex: 0 0 36px;
+  }
+  .mu-search-name { color: #e8ecef; font-size: .88rem; line-height: 1.2; }
+  .mu-search-sub { color: #889; font-size: .74rem; }
+
+  .mu-similar-card {
+    display: flex; gap: .55rem; align-items: center;
+    padding: .45rem .65rem; border: 1px solid #2d3a47; border-radius: 6px;
+    margin-bottom: .4rem; background: #1a2128;
+  }
+
+  /* Modal */
+  .mu-modal-backdrop {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.72);
+    backdrop-filter: blur(2px); display: none;
+    align-items: center; justify-content: center;
+    z-index: 1080; padding: 1rem;
+  }
+  .mu-modal-backdrop.show { display: flex; }
+  .mu-modal {
+    background: #1a2128; border: 1px solid #3a4654; border-radius: 10px;
+    width: 100%; max-width: 640px; max-height: 92vh; display: flex;
+    flex-direction: column; box-shadow: 0 12px 40px rgba(0,0,0,0.55);
+  }
+  .mu-modal-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: .9rem 1.25rem; border-bottom: 1px solid #2d3a47;
+  }
+  .mu-modal-header h5 { margin: 0; color: #f39c12; font-size: 1.05rem; }
+  .mu-modal-body { padding: 1rem 1.25rem; overflow-y: auto; }
+  .mu-modal-footer {
+    display: flex; gap: .5rem; padding: .75rem 1.25rem;
+    border-top: 1px solid #2d3a47;
+  }
+  .mu-modal-close {
+    background: none; border: none; color: #888; font-size: 1.4rem;
+    line-height: 1; cursor: pointer; padding: 0 .25rem;
+  }
+
+  .mu-empty {
+    text-align: center; color: #889; padding: 1.5rem .5rem;
+    font-size: .9rem;
+  }
+</style>
+
+<!-- ─── Header + zone picker ─────────────────────────────────────────── -->
+<div class="d-flex justify-content-between align-items-baseline mb-2 flex-wrap gap-2">
+  <h2 class="mb-0">Music</h2>
+  <div class="d-flex gap-2 align-items-center small">
+    <span class="text-secondary">Play on</span>
+    <select id="muZone" class="form-select form-select-sm bg-dark text-light border-secondary"
+            style="min-width: 180px"></select>
+  </div>
+</div>
+<div class="text-secondary small mb-3">
+  Apple Music via Music Assistant · homebrew Pandora · per-zone control
 </div>
 
-<!-- Zone picker + grouping -->
-<div class="card bg-dark border-secondary p-2 mb-3">
-  <div class="d-flex justify-content-between align-items-baseline mb-2">
-    <strong class="small text-uppercase text-secondary">Zones</strong>
-    <span class="small text-secondary">Active = primary · 🔗 = grouped with primary</span>
-  </div>
-  <div class="d-flex flex-wrap gap-2" id="zonePicker"></div>
-  <div class="d-flex gap-2 mt-2 small">
-    <button class="btn btn-sm btn-outline-warning" id="ungroupActiveBtn" onclick="ungroupActive()" style="display:none">Ungroup primary</button>
+<!-- ─── Quick search ─────────────────────────────────────────────────── -->
+<div class="mu-section">
+  <div class="mu-search-wrap">
+    <input id="muSearch" type="search"
+           class="form-control bg-dark text-light border-secondary"
+           placeholder="Search artists, albums, songs, playlists…"
+           autocomplete="off">
+    <div id="muSearchDropdown" class="mu-search-dropdown"></div>
   </div>
 </div>
 
-<div class="row g-3">
-  <!-- Now playing + transport -->
-  <div class="col-12">
-    <div class="card bg-dark border-secondary">
-      <div class="card-body" id="nowPlayingCard">
-        <div class="d-flex gap-3 align-items-center">
-          <img id="np-art" src="" alt="" style="height:90px;width:90px;border-radius:6px;object-fit:cover;background:#333;display:none">
-          <div id="np-art-fallback" style="width:90px;height:90px;background:#333;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:2rem">🎵</div>
-          <div class="flex-grow-1 min-w-0">
-            <div class="text-secondary small text-uppercase" id="np-zone-state">—</div>
-            <div class="fs-5 fw-semibold text-truncate" id="np-title">—</div>
-            <div class="text-secondary text-truncate" id="np-artist">—</div>
-          </div>
-          <div class="d-flex gap-1">
-            <button class="btn btn-outline-light" onclick="bensonMusic.ctrl('previous')">⏮</button>
-            <button class="btn btn-warning" id="np-play-btn" onclick="bensonMusic.togglePlay()">▶</button>
-            <button class="btn btn-outline-light" onclick="bensonMusic.ctrl('next')">⏭</button>
-          </div>
-          <div style="min-width:140px">
-            <input type="range" class="form-range" id="np-volume" min="0" max="1" step="0.02" value="0.4">
-            <div class="text-secondary small text-center" id="np-volume-label">—%</div>
-          </div>
+<!-- ─── Now playing strip ────────────────────────────────────────────── -->
+<div class="mu-section">
+  <div class="mu-section-header">
+    <h3 class="mu-section-title">Now Playing</h3>
+    <div class="d-flex gap-2 align-items-center">
+      <span class="mu-section-sub" id="muNpSummary">—</span>
+      <button class="btn btn-sm btn-outline-secondary" id="muNpShowAll">show all</button>
+    </div>
+  </div>
+  <div class="mu-np-strip" id="muNpStrip">
+    <div class="mu-empty" style="flex:1">Loading zones…</div>
+  </div>
+</div>
+
+<!-- ─── Stations (homebrew Pandora) ──────────────────────────────────── -->
+<div class="mu-section">
+  <div class="mu-section-header">
+    <h3 class="mu-section-title">Stations</h3>
+    <span class="mu-section-sub">tap a card to start it on the selected zone</span>
+  </div>
+  <div class="mu-grid-wide" id="muStations">
+    <div class="mu-empty" style="grid-column: 1/-1">Loading stations…</div>
+  </div>
+</div>
+
+<!-- ─── Similar artist radio widget ──────────────────────────────────── -->
+<div class="mu-section">
+  <div class="mu-section-header">
+    <h3 class="mu-section-title">Similar Artist Radio</h3>
+    <span class="mu-section-sub">type any artist; pick one to spin up a radio station</span>
+  </div>
+  <div class="card bg-dark border-secondary p-3">
+    <div class="d-flex gap-2 mb-2">
+      <input id="muSimQuery" type="search"
+             class="form-control bg-dark text-light border-secondary"
+             placeholder="e.g. Bush, Foo Fighters, Bill Withers…">
+      <button id="muSimBtn" class="btn btn-warning">Find</button>
+    </div>
+    <div id="muSimResults" class="small text-secondary">
+      Tip: starting from an artist in your library tends to yield richer radios.
+    </div>
+  </div>
+</div>
+
+<!-- ─── Your library ─────────────────────────────────────────────────── -->
+<div class="mu-section">
+  <div class="mu-section-header">
+    <h3 class="mu-section-title">Your Library</h3>
+    <div class="d-flex gap-2 align-items-center">
+      <span class="mu-section-sub" id="muLibCount">—</span>
+      <button class="btn btn-sm btn-outline-secondary" id="muLibRefresh">refresh</button>
+    </div>
+  </div>
+  <div class="mu-grid" id="muLibrary">
+    <div class="mu-empty" style="grid-column: 1/-1">Loading playlists…</div>
+  </div>
+</div>
+
+<!-- ─── Station builder modal ────────────────────────────────────────── -->
+<div class="mu-modal-backdrop" id="muModalBackdrop">
+  <div class="mu-modal">
+    <div class="mu-modal-header">
+      <h5>Build new station</h5>
+      <button class="mu-modal-close" onclick="muCloseModal()">&times;</button>
+    </div>
+    <div class="mu-modal-body">
+      <div class="mb-3">
+        <label class="form-label small text-secondary text-uppercase">Name</label>
+        <input id="muNewName" class="form-control bg-dark text-light border-secondary"
+               placeholder="e.g. Sunday Garage" maxlength="64">
+      </div>
+      <div class="mb-3">
+        <label class="form-label small text-secondary text-uppercase">Genre</label>
+        <div id="muChipsGenre"></div>
+      </div>
+      <div class="mb-3">
+        <label class="form-label small text-secondary text-uppercase">Decade</label>
+        <div id="muChipsDecade"></div>
+      </div>
+      <div class="mb-3">
+        <label class="form-label small text-secondary text-uppercase">Mood</label>
+        <div id="muChipsMood"></div>
+      </div>
+      <div class="mb-2">
+        <label class="form-label small text-secondary text-uppercase">Seed artists / songs</label>
+        <input id="muNewSeeds" class="form-control bg-dark text-light border-secondary"
+               placeholder="comma-separated, e.g. Bush, Foo Fighters, Black Hole Sun">
+        <div class="text-secondary small mt-1">
+          One name per item. Songs OK too — we'll figure it out.
         </div>
       </div>
     </div>
-  </div>
-
-  <!-- Search -->
-  <div class="col-12 col-lg-6">
-    <div class="card bg-dark border-secondary h-100">
-      <div class="card-header bg-dark border-secondary">
-        <form id="searchForm" class="d-flex gap-2">
-          <input type="text" id="searchQuery" class="form-control bg-dark text-light border-secondary" placeholder="Search Apple Music — playlists, artists, albums, songs…">
-          <select id="searchType" class="form-select bg-dark text-light border-secondary" style="width:auto">
-            <option value="playlist">Playlists</option>
-            <option value="album">Albums</option>
-            <option value="artist">Artists</option>
-            <option value="track">Songs</option>
-          </select>
-          <button class="btn btn-warning">Search</button>
-        </form>
-      </div>
-      <div class="card-body" id="searchResults" style="max-height: 60vh; overflow-y: auto;">
-        <div class="text-secondary small text-center py-4">Search Apple Music. Click any result to play on the active zone.</div>
-      </div>
-    </div>
-  </div>
-
-  <!-- Playlists -->
-  <div class="col-12 col-lg-6">
-    <div class="card bg-dark border-secondary h-100">
-      <div class="card-header bg-dark border-secondary d-flex justify-content-between align-items-center">
-        <strong>Library Playlists</strong>
-        <button id="refreshPlaylists" class="btn btn-sm btn-outline-secondary">↻</button>
-      </div>
-      <div class="card-body" id="playlistsList" style="max-height: 60vh; overflow-y: auto;">
-        <div class="text-secondary small text-center py-4">Loading…</div>
-      </div>
-      <div class="card-footer bg-dark border-secondary text-secondary small">
-        <strong>Don't see your Apple Music playlists?</strong> They only appear here once they're in MA's library.
-        Open <a href="http://192.168.0.240:8095" target="_blank" hx-boost="false" class="text-warning">Music Assistant</a> →
-        Apple Music → Playlists → favorite the ones you want shown here.
-      </div>
+    <div class="mu-modal-footer">
+      <button class="btn btn-outline-secondary" onclick="muCloseModal()">Cancel</button>
+      <button class="btn btn-warning ms-auto" id="muNewSave">Save station</button>
     </div>
   </div>
 </div>
 
 <script>
 (function(){
-// Clear any prior music timers (HTMX boost re-runs scripts on nav)
-if (window.__musicTimers) window.__musicTimers.forEach(id => clearInterval(id));
-window.__musicTimers = [];
+  // Reset any prior music timers (hx-boost reruns scripts on nav)
+  if (window.__musicTimers) window.__musicTimers.forEach(id => clearInterval(id));
+  window.__musicTimers = [];
 
-const ZONES = [
-  { room: 'kitchen',        entity: 'media_player.kitchen_2',        label: 'Kitchen' },
-  { room: 'family_room',    entity: 'media_player.family_room_2',    label: 'Family Room' },
-  { room: 'tv_room',        entity: 'media_player.tv_room_2',        label: 'TV Room' },
-  { room: 'master_bedroom', entity: 'media_player.bathroom_2',       label: 'Master Bedroom' },
-  { room: 'move',           entity: 'media_player.move_2',           label: 'Move (Patio)' },
-];
-let activeZone = ZONES[0];
-let lastPlayers = [];      // last polled state, keyed by entity_id
-let userTouchingVolume = false;
+  // ─── Constants ──────────────────────────────────────────────────────
+  const ZONES = [
+    { room: 'kitchen',           entity: 'media_player.kitchen_2',           label: 'Kitchen' },
+    { room: 'family_room',       entity: 'media_player.family_room_2',       label: 'Family Room' },
+    { room: 'tv_room',           entity: 'media_player.tv_room_2',           label: 'TV Room' },
+    { room: 'master_bedroom',    entity: 'media_player.bathroom_2',          label: 'Master Bedroom' },
+    { room: 'move',              entity: 'media_player.move_2',              label: 'Move (Patio)' },
+    { room: 'respeaker_kitchen', entity: 'media_player.respeaker_kitchen',   label: 'Kitchen Satellite' },
+  ];
+  const GENRES  = ['Rock','Pop','R&B','Country','Jazz','Hip-Hop','Electronic','Folk/Acoustic','Indie','Metal','Classical'];
+  const DECADES = ['60s','70s','80s','90s','2000s','2010s','2020s'];
+  const MOODS   = ['Upbeat','Mellow','Focused','Romantic','Party','Workout','Sleep'];
 
-// ─── Render zone picker (once) ───────────────────────────────────────
-const picker = document.getElementById('zonePicker');
-ZONES.forEach((z, i) => {
-  const wrap = document.createElement('div');
-  wrap.className = 'd-flex align-items-center';
-  wrap.dataset.entity = z.entity;
-  wrap.innerHTML = `
-    <button class="btn btn-sm btn-outline-warning zone-btn" data-entity="${z.entity}">${z.label}</button>
-    <button class="btn btn-sm btn-outline-secondary ms-1 chain-btn" data-entity="${z.entity}" title="Toggle group with primary" style="display:none">🔗</button>
-  `;
-  picker.appendChild(wrap);
-});
+  function escHtml(s) {
+    return String(s ?? '').replace(/[&<>"']/g, c => (
+      {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
 
-function setActiveZone(entity) {
-  activeZone = ZONES.find(z => z.entity === entity) || ZONES[0];
-  document.querySelectorAll('.zone-btn').forEach(b => {
-    const isActive = b.dataset.entity === activeZone.entity;
-    b.classList.toggle('btn-warning', isActive);
-    b.classList.toggle('btn-outline-warning', !isActive);
+  // ─── Zone picker ────────────────────────────────────────────────────
+  const zoneSel = document.getElementById('muZone');
+  ZONES.forEach(z => {
+    const o = document.createElement('option');
+    o.value = z.entity; o.textContent = z.label;
+    zoneSel.appendChild(o);
   });
-  updateGroupingUI();
+  zoneSel.value = localStorage.getItem('benson_music_zone') || ZONES[0].entity;
+  zoneSel.addEventListener('change', () => {
+    localStorage.setItem('benson_music_zone', zoneSel.value);
+  });
+  function activeEntity() { return zoneSel.value; }
+  function activeLabel() {
+    const z = ZONES.find(x => x.entity === activeEntity());
+    return z ? z.label : 'zone';
+  }
+
+  // ─── Now-playing strip ──────────────────────────────────────────────
+  let showAllZones = false;
+  document.getElementById('muNpShowAll').addEventListener('click', (e) => {
+    showAllZones = !showAllZones;
+    e.target.textContent = showAllZones ? 'show fewer' : 'show all';
+    refreshNowPlaying();
+  });
+
+  async function refreshNowPlaying() {
+    try {
+      const r = await fetch('/api/music/now-playing');
+      const j = await r.json();
+      const zones = j.zones || [];
+      const playing = zones.filter(z => z.playing);
+      // Default to currently active zones; collapsible "show all" reveals the rest.
+      const visible = showAllZones
+        ? zones
+        : (playing.length ? playing.slice(0,3) : zones.slice(0,1));
+      const strip = document.getElementById('muNpStrip');
+      strip.innerHTML = visible.map(z => renderNpCard(z)).join('') ||
+        '<div class="mu-empty" style="flex:1">Nothing playing.</div>';
+      document.getElementById('muNpSummary').textContent =
+        playing.length
+          ? `${playing.length} zone${playing.length===1?'':'s'} playing`
+          : 'idle';
+      // If a zone is playing and the user hasn't picked one yet, follow it
+      if (playing.length && !localStorage.getItem('benson_music_zone')) {
+        zoneSel.value = playing[0].entity_id;
+      }
+    } catch (e) { console.warn('now-playing:', e); }
+  }
+
+  function renderNpCard(z) {
+    const active = z.entity_id === activeEntity();
+    const art = z.entity_picture
+      ? `<img class="mu-np-art" src="${escHtml(z.entity_picture)}" alt="">`
+      : `<div class="mu-np-art" style="display:flex;align-items:center;justify-content:center;color:#6c7a8a;font-size:1.4rem">♪</div>`;
+    const title = z.media_title || (z.playing ? '—' : 'idle');
+    const sub = [z.media_artist, z.media_album_name].filter(Boolean).join(' · ') || '';
+    const vol = (typeof z.volume === 'number') ? Math.round(z.volume*100) : 0;
+    const playBtn = z.playing ? '⏸' : '▶';
+    return `
+      <div class="mu-np-card ${active?'active':''}" data-entity="${escHtml(z.entity_id)}">
+        ${art}
+        <div class="mu-np-meta">
+          <div class="mu-np-zone ${z.playing?'playing':''}">
+            ${escHtml(z.label)} · ${escHtml(z.state || 'unknown')}
+          </div>
+          <div class="mu-np-title">${escHtml(title)}</div>
+          <div class="mu-np-artist">${escHtml(sub)}</div>
+          <input type="range" class="mu-np-vol" min="0" max="1" step="0.02"
+                 value="${z.volume ?? 0.3}"
+                 oninput="muVol('${escHtml(z.entity_id)}', this.value, this)">
+        </div>
+        <div class="mu-np-controls">
+          <div class="mu-np-row">
+            <button class="mu-np-btn" onclick="muTransport('${escHtml(z.entity_id)}','prev')" title="Previous">⏮</button>
+            <button class="mu-np-btn play" onclick="muTransport('${escHtml(z.entity_id)}','${z.playing?'pause':'play'}')">${playBtn}</button>
+            <button class="mu-np-btn" onclick="muTransport('${escHtml(z.entity_id)}','skip')" title="Next">⏭</button>
+          </div>
+          <div class="text-secondary small text-center mt-1">${vol}%</div>
+        </div>
+      </div>`;
+  }
+
+  // Click on a now-playing card → make it the active zone
+  document.getElementById('muNpStrip').addEventListener('click', (e) => {
+    const card = e.target.closest('.mu-np-card');
+    if (!card) return;
+    if (e.target.closest('button') || e.target.closest('input')) return;
+    zoneSel.value = card.dataset.entity;
+    localStorage.setItem('benson_music_zone', card.dataset.entity);
+    refreshNowPlaying();
+  });
+
+  window.muTransport = async function(entity, action) {
+    try {
+      await fetch('/api/music/transport', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({zone: entity, action}),
+      });
+      setTimeout(refreshNowPlaying, 400);
+    } catch(e) { console.warn('transport:', e); }
+  };
+  let volTimer = null;
+  window.muVol = function(entity, value, el) {
+    clearTimeout(volTimer);
+    volTimer = setTimeout(() => {
+      fetch('/api/music/transport', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({zone: entity, action: 'volume_set', level: parseFloat(value)}),
+      });
+    }, 120);
+  };
+
+  // ─── Stations ───────────────────────────────────────────────────────
+  async function loadStations() {
+    const wrap = document.getElementById('muStations');
+    try {
+      const r = await fetch('/api/music/stations');
+      const j = await r.json();
+      const items = j.stations || [];
+      const cards = items.map(s => renderStation(s)).join('');
+      wrap.innerHTML = cards + renderNewStationCard();
+    } catch (e) {
+      wrap.innerHTML = '<div class="mu-empty" style="grid-column:1/-1">Couldn\'t load stations.</div>';
+    }
+  }
+
+  function renderStation(s) {
+    const seeds = s.seeds || {};
+    const palette = s.cover_palette || {hex_from:'#34495e', hex_to:'#1abc9c'};
+    const artists = (seeds.seed_artists || []).slice(0,4);
+    const tags = []
+      .concat((seeds.genres||[]).slice(0,2))
+      .concat((seeds.decades||[]).slice(0,1))
+      .concat((seeds.moods||[]).slice(0,1));
+    return `
+      <div class="mu-station" data-id="${s.id}"
+           style="--from:${escHtml(palette.hex_from)};--to:${escHtml(palette.hex_to)}"
+           onclick="muPlayStation(${s.id})">
+        <div class="mu-station-name">${escHtml(s.name)}</div>
+        ${artists.length ? `<div class="mu-station-seeds">${escHtml(artists.join(' · '))}</div>` : ''}
+        ${tags.length ? `<div class="mu-station-tags">${tags.map(t => `<span class="mu-station-tag">${escHtml(t)}</span>`).join('')}</div>` : ''}
+        <div class="mu-station-foot">
+          <button class="mu-station-play" onclick="event.stopPropagation();muPlayStation(${s.id})">
+            ▶ Play on ${escHtml(activeLabel())}
+          </button>
+          <button class="mu-station-del" onclick="event.stopPropagation();muDeleteStation(${s.id})" title="Delete">×</button>
+        </div>
+      </div>`;
+  }
+  function renderNewStationCard() {
+    return `<div class="mu-station new" onclick="muOpenModal()">
+      <div style="font-size:2rem;line-height:1">+</div>
+      <div style="font-weight:600">Build new station</div>
+      <div class="small">genre · decade · mood · seed artists</div>
+    </div>`;
+  }
+
+  window.muPlayStation = async function(id) {
+    const entity = activeEntity();
+    try {
+      const r = await fetch(`/api/music/stations/${id}/play`, {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({zone: entity}),
+      });
+      if (!r.ok) { const t = await r.text(); alert('Station start failed: ' + t); return; }
+      setTimeout(refreshNowPlaying, 1500);
+    } catch(e) { alert('Station start error: ' + e); }
+  };
+
+  window.muDeleteStation = async function(id) {
+    if (!confirm('Delete this station?')) return;
+    try {
+      await fetch(`/api/music/stations/${id}`, {method:'DELETE'});
+      loadStations();
+    } catch(e) { console.warn('delete:', e); }
+  };
+
+  // ─── Builder modal ──────────────────────────────────────────────────
+  const sel = { genres: new Set(), decades: new Set(), moods: new Set() };
+  function buildChips(host, items, group) {
+    host.innerHTML = items.map(v =>
+      `<span class="mu-chip" data-group="${group}" data-val="${escHtml(v)}">${escHtml(v)}</span>`
+    ).join('');
+    host.querySelectorAll('.mu-chip').forEach(c => {
+      c.addEventListener('click', () => {
+        const g = c.dataset.group, v = c.dataset.val;
+        if (sel[g].has(v)) { sel[g].delete(v); c.classList.remove('active'); }
+        else { sel[g].add(v); c.classList.add('active'); }
+      });
+    });
+  }
+  buildChips(document.getElementById('muChipsGenre'),  GENRES,  'genres');
+  buildChips(document.getElementById('muChipsDecade'), DECADES, 'decades');
+  buildChips(document.getElementById('muChipsMood'),   MOODS,   'moods');
+
+  window.muOpenModal = function() {
+    document.getElementById('muNewName').value = '';
+    document.getElementById('muNewSeeds').value = '';
+    sel.genres.clear(); sel.decades.clear(); sel.moods.clear();
+    document.querySelectorAll('#muModalBackdrop .mu-chip').forEach(c => c.classList.remove('active'));
+    document.getElementById('muModalBackdrop').classList.add('show');
+    setTimeout(() => document.getElementById('muNewName').focus(), 80);
+  };
+  window.muCloseModal = function() {
+    document.getElementById('muModalBackdrop').classList.remove('show');
+  };
+  document.getElementById('muModalBackdrop').addEventListener('click', (e) => {
+    if (e.target.id === 'muModalBackdrop') muCloseModal();
+  });
+  document.getElementById('muNewSave').addEventListener('click', async () => {
+    const name = document.getElementById('muNewName').value.trim();
+    if (!name) { alert('Name your station'); return; }
+    const seedRaw = document.getElementById('muNewSeeds').value;
+    const seeds = {
+      genres: Array.from(sel.genres),
+      decades: Array.from(sel.decades),
+      moods: Array.from(sel.moods),
+      seed_artists: seedRaw.split(',').map(s => s.trim()).filter(Boolean),
+      seed_tracks: [],
+    };
+    try {
+      const r = await fetch('/api/music/stations', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({name, seeds}),
+      });
+      if (!r.ok) { alert('Save failed: ' + await r.text()); return; }
+      muCloseModal();
+      loadStations();
+    } catch(e) { alert('Save error: ' + e); }
+  });
+
+  // ─── Library playlists ──────────────────────────────────────────────
+  async function loadLibrary(refresh) {
+    const wrap = document.getElementById('muLibrary');
+    wrap.innerHTML = '<div class="mu-empty" style="grid-column:1/-1">Loading playlists…</div>';
+    try {
+      const r = await fetch('/api/music/library/playlists' + (refresh?'?refresh=1':''));
+      const j = await r.json();
+      const items = j.playlists || [];
+      document.getElementById('muLibCount').textContent =
+        items.length + (j.cached ? ' (cached)' : '');
+      if (!items.length) {
+        wrap.innerHTML = '<div class="mu-empty" style="grid-column:1/-1">No playlists yet — favorite some in Music Assistant to surface them here.</div>';
+        return;
+      }
+      wrap.innerHTML = items.map(p => renderPlaylist(p)).join('');
+    } catch(e) {
+      wrap.innerHTML = `<div class="mu-empty" style="grid-column:1/-1">Couldn't load library: ${escHtml(e)}</div>`;
+    }
+  }
+  function renderPlaylist(p) {
+    const uri = escHtml(p.uri || '');
+    const bg = p.image
+      ? `background-image:url('${escHtml(p.image)}')`
+      : '';
+    const ph = p.image ? '' : '♪';
+    return `<div class="mu-card" onclick="muPlayMedia('${uri}','playlist','replace')">
+      <button class="mu-card-menu" title="More" onclick="event.stopPropagation();muPlaylistMenu('${uri}', '${escHtml(p.name||'')}', event)">⋯</button>
+      <div class="mu-card-cover" style="${bg}">${ph}</div>
+      <div class="mu-card-body">
+        <div class="mu-card-title">${escHtml(p.name || '(untitled)')}</div>
+        <div class="mu-card-sub">${escHtml(p.provider || '')}${p.track_count?(' · ' + p.track_count + ' tracks'):''}</div>
+      </div>
+    </div>`;
+  }
+  document.getElementById('muLibRefresh').addEventListener('click', () => loadLibrary(true));
+
+  window.muPlayMedia = async function(uri, type, mode) {
+    try {
+      const r = await fetch('/api/music/play', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({
+          zone: activeEntity(), media_id_or_query: uri,
+          content_type: type, queue_mode: mode || 'replace',
+        }),
+      });
+      if (!r.ok) { alert('Play failed: ' + await r.text()); return; }
+      setTimeout(refreshNowPlaying, 1500);
+    } catch(e) { alert('Play error: ' + e); }
+  };
+
+  window.muPlaylistMenu = function(uri, name, ev) {
+    // Lightweight inline menu — buttons over a backdrop
+    const existing = document.getElementById('muPlMenu');
+    if (existing) existing.remove();
+    const m = document.createElement('div');
+    m.id = 'muPlMenu';
+    m.style.cssText = 'position:fixed;z-index:1090;background:#1a2128;border:1px solid #3a4654;border-radius:6px;padding:.3rem;display:flex;flex-direction:column;gap:.2rem;box-shadow:0 8px 18px rgba(0,0,0,.5)';
+    const rect = ev.target.getBoundingClientRect();
+    m.style.top = (rect.bottom + 4) + 'px';
+    m.style.left = Math.max(8, rect.right - 200) + 'px';
+    m.innerHTML = `
+      <button class="btn btn-sm btn-outline-light text-start" onclick="muPlayMedia('${uri}','playlist','replace');muClosePlMenu()">Play now</button>
+      <button class="btn btn-sm btn-outline-light text-start" onclick="muPlayMedia('${uri}','playlist','next');muClosePlMenu()">Play next</button>
+      <button class="btn btn-sm btn-outline-light text-start" onclick="muPlayMedia('${uri}','playlist','add');muClosePlMenu()">Add to queue</button>
+      <button class="btn btn-sm btn-outline-warning text-start" onclick="muStartRadioFromPlaylist('${uri}');muClosePlMenu()">Start similar radio</button>
+    `;
+    document.body.appendChild(m);
+    setTimeout(() => {
+      document.addEventListener('click', muClosePlMenu, { once: true });
+    }, 50);
+  };
+  window.muClosePlMenu = function() {
+    const m = document.getElementById('muPlMenu');
+    if (m) m.remove();
+  };
+  window.muStartRadioFromPlaylist = async function(uri) {
+    try {
+      const r = await fetch('/api/music/play', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({
+          zone: activeEntity(), media_id_or_query: uri,
+          content_type: 'playlist', queue_mode: 'replace',
+          radio_mode: true,
+        }),
+      });
+      if (!r.ok) alert('Radio failed: ' + await r.text());
+      setTimeout(refreshNowPlaying, 1500);
+    } catch(e) { alert('Radio error: ' + e); }
+  };
+
+  // ─── Quick search ───────────────────────────────────────────────────
+  const muSearch = document.getElementById('muSearch');
+  const muDrop = document.getElementById('muSearchDropdown');
+  let searchTimer = null;
+  muSearch.addEventListener('input', () => {
+    clearTimeout(searchTimer);
+    const q = muSearch.value.trim();
+    if (q.length < 2) { muDrop.classList.remove('show'); muDrop.innerHTML = ''; return; }
+    searchTimer = setTimeout(() => doSearch(q), 220);
+  });
+  muSearch.addEventListener('focus', () => {
+    if (muDrop.innerHTML.trim()) muDrop.classList.add('show');
+  });
+  document.addEventListener('click', (e) => {
+    if (!e.target.closest('.mu-search-wrap')) muDrop.classList.remove('show');
+  });
+
+  async function doSearch(q) {
+    muDrop.classList.add('show');
+    muDrop.innerHTML = '<div class="mu-search-section-label">searching…</div>';
+    try {
+      const r = await fetch('/api/music/search?q=' + encodeURIComponent(q) +
+                            '&type=artist,album,track,playlist&limit=5');
+      const j = await r.json();
+      const res = j.results || {};
+      const sections = [];
+      const order = [['artists','Artists','artist'],['albums','Albums','album'],
+                     ['tracks','Songs','track'],['playlists','Playlists','playlist']];
+      for (const [k, label, mt] of order) {
+        const items = (res[k] || []).slice(0,5);
+        if (!items.length) continue;
+        sections.push(`<div class="mu-search-section-label">${label}</div>` +
+          items.map(it => renderSearchRow(it, mt)).join(''));
+      }
+      muDrop.innerHTML = sections.join('') ||
+        '<div class="mu-search-section-label">no results</div>';
+    } catch (e) {
+      muDrop.innerHTML = `<div class="mu-search-section-label">error: ${escHtml(e)}</div>`;
+    }
+  }
+  function renderSearchRow(it, mt) {
+    const name = it.name || it.title || '(untitled)';
+    let img = it.image;
+    if (!img && it.metadata && it.metadata.images && it.metadata.images[0]) {
+      img = it.metadata.images[0].path;
+    }
+    const sub = (it.artists || []).map(a => a.name || a).join(', ')
+              || (it.album && (it.album.name || it.album))
+              || mt;
+    const uri = (it.uri || '').replace(/'/g, '');
+    const art = img
+      ? `<img class="mu-search-art" src="${escHtml(img)}" alt="">`
+      : `<div class="mu-search-art" style="display:flex;align-items:center;justify-content:center;color:#6c7a8a">♪</div>`;
+    return `<div class="mu-search-row" onclick="muPlayMedia('${escHtml(uri)}','${mt}','replace');document.getElementById('muSearchDropdown').classList.remove('show');document.getElementById('muSearch').value=''">
+      ${art}
+      <div class="flex-grow-1 min-w-0">
+        <div class="mu-search-name">${escHtml(name)}</div>
+        <div class="mu-search-sub">${escHtml(sub)}</div>
+      </div>
+    </div>`;
+  }
+
+  // ─── Similar-artist widget ──────────────────────────────────────────
+  document.getElementById('muSimBtn').addEventListener('click', doSimilar);
+  document.getElementById('muSimQuery').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); doSimilar(); }
+  });
+  async function doSimilar() {
+    const q = document.getElementById('muSimQuery').value.trim();
+    const out = document.getElementById('muSimResults');
+    if (!q) return;
+    out.innerHTML = '<div class="text-secondary">Searching…</div>';
+    try {
+      const r = await fetch('/api/music/similar?artist=' + encodeURIComponent(q));
+      const j = await r.json();
+      const artists = j.artists || [];
+      if (!artists.length) {
+        out.innerHTML = `<div class="text-secondary">No artist hits for "${escHtml(q)}".</div>`;
+        return;
+      }
+      out.innerHTML = artists.map(a => {
+        let img = a.image;
+        const art = img
+          ? `<img src="${escHtml(img)}" style="width:42px;height:42px;border-radius:4px;object-fit:cover">`
+          : `<div style="width:42px;height:42px;background:#2a3340;border-radius:4px;display:flex;align-items:center;justify-content:center;color:#6c7a8a">♪</div>`;
+        const uri = (a.uri || '').replace(/'/g,'');
+        return `<div class="mu-similar-card">
+          ${art}
+          <div class="flex-grow-1">
+            <div style="color:#e8ecef;font-weight:600">${escHtml(a.name)}</div>
+            <div class="text-secondary small">${escHtml(a.provider || 'artist')}</div>
+          </div>
+          <button class="btn btn-sm btn-warning"
+                  onclick="muStartRadioFromArtist('${escHtml(uri)}','${escHtml(a.name)}')">
+            ▶ Start radio
+          </button>
+        </div>`;
+      }).join('');
+    } catch(e) {
+      out.innerHTML = `<div class="text-warning">Similar lookup failed: ${escHtml(e)}</div>`;
+    }
+  }
+  window.muStartRadioFromArtist = async function(uri, name) {
+    try {
+      const r = await fetch('/api/music/play', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({
+          zone: activeEntity(),
+          media_id_or_query: uri || name,
+          content_type: 'artist',
+          queue_mode: 'replace',
+          radio_mode: true,
+        }),
+      });
+      if (!r.ok) { alert('Radio start failed: ' + await r.text()); return; }
+      setTimeout(refreshNowPlaying, 1500);
+    } catch(e) { alert('Radio start error: ' + e); }
+  };
+
+  // ─── Init ───────────────────────────────────────────────────────────
   refreshNowPlaying();
-}
-document.querySelectorAll('.zone-btn').forEach(b => {
-  b.addEventListener('click', () => setActiveZone(b.dataset.entity));
-});
-setActiveZone(activeZone.entity);
-
-// ─── Grouping UI ─────────────────────────────────────────────────────
-function updateGroupingUI() {
-  const primaryPlayer = lastPlayers.find(p => p.entity_id === activeZone.entity);
-  const primarySonos = primaryPlayer?.sonos_entity_id;
-  const primaryGroup = primaryPlayer?.group_members || [];
-
-  // Show ungroup button if primary has >1 group_member AND it's the leader
-  const ungroupBtn = document.getElementById('ungroupActiveBtn');
-  ungroupBtn.style.display = (primaryGroup.length > 1 && primaryPlayer?.is_group_leader) ? 'inline-block' : 'none';
-
-  document.querySelectorAll('.chain-btn').forEach(btn => {
-    const eid = btn.dataset.entity;
-    if (eid === activeZone.entity) { btn.style.display = 'none'; return; }
-    btn.style.display = 'inline-block';
-    const z = lastPlayers.find(p => p.entity_id === eid);
-    const inGroup = primaryGroup.includes(z?.sonos_entity_id);
-    btn.classList.toggle('btn-warning', inGroup);
-    btn.classList.toggle('btn-outline-secondary', !inGroup);
-    btn.textContent = inGroup ? '🔗' : '＋';
-    btn.title = inGroup ? `Remove ${z?.label || eid} from group` : `Add ${z?.label || eid} to group`;
-    btn.onclick = () => toggleGroupMember(eid, !inGroup);
-  });
-}
-
-async function toggleGroupMember(memberEntity, add) {
-  if (add) {
-    // Add to group: ALL currently-grouped + this one as members of primary
-    const primary = lastPlayers.find(p => p.entity_id === activeZone.entity);
-    const existing = (primary?.group_members || []).filter(e => e !== primary.sonos_entity_id);
-    const newMembers = Array.from(new Set([...existing, memberEntity]));
-    const r = await fetch('/api/music/group', {
-      method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({primary: activeZone.entity, members: newMembers}),
-    });
-    if (!r.ok) alert('group failed: ' + await r.text());
-  } else {
-    const r = await fetch('/api/music/ungroup', {
-      method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({entity_id: memberEntity}),
-    });
-    if (!r.ok) alert('ungroup failed: ' + await r.text());
-  }
-  setTimeout(refreshNowPlaying, 600);
-}
-
-window.ungroupActive = async function() {
-  if (!confirm('Ungroup all zones from primary?')) return;
-  const primary = lastPlayers.find(p => p.entity_id === activeZone.entity);
-  const members = (primary?.group_members || []).filter(e => e !== primary.sonos_entity_id);
-  for (const m of members) {
-    await fetch('/api/music/ungroup', {
-      method: 'POST', headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({entity_id: m}),
-    });
-  }
-  setTimeout(refreshNowPlaying, 600);
-};
-
-// ─── Now-playing in-place updates (no full re-render → no jitter) ────
-const $ = id => document.getElementById(id);
-
-async function refreshNowPlaying() {
-  try {
-    const r = await fetch('/api/music/players');
-    const j = await r.json();
-    lastPlayers = j.players || [];
-    const p = lastPlayers.find(x => x.entity_id === activeZone.entity);
-    if (!p) return;
-
-    const playing = ['playing', 'buffering'].includes(p.state);
-    const stateLabel = `${p.label || p.room} · ${p.state || 'unknown'}`;
-
-    if ($('np-zone-state').textContent !== stateLabel) $('np-zone-state').textContent = stateLabel;
-    if ($('np-title').textContent !== (p.media_title || '—')) $('np-title').textContent = p.media_title || '—';
-    const artistText = (p.media_artist || '') + (p.media_album_name ? ' · ' + p.media_album_name : '');
-    if ($('np-artist').textContent !== (artistText || '—')) $('np-artist').textContent = artistText || '—';
-
-    // Album art only updates on URL change
-    const art = $('np-art');
-    if (p.entity_picture) {
-      const url = p.entity_picture.startsWith('/') ? p.entity_picture : p.entity_picture;
-      if (art.src !== url) art.src = url;
-      art.style.display = '';
-      $('np-art-fallback').style.display = 'none';
-    } else {
-      art.style.display = 'none';
-      $('np-art-fallback').style.display = '';
-    }
-
-    // Play/pause icon
-    const pb = $('np-play-btn');
-    pb.textContent = playing ? '⏸' : '▶';
-    pb.dataset.playing = playing ? '1' : '0';
-
-    // Volume — DON'T touch while user is dragging
-    if (!userTouchingVolume) {
-      const v = (typeof p.volume === 'number') ? p.volume : 0;
-      $('np-volume').value = v;
-      $('np-volume-label').textContent = Math.round(v * 100) + '%';
-    }
-
-    updateGroupingUI();
-  } catch(e) { console.warn('refreshNowPlaying:', e); }
-}
-
-// Volume slider with touch-tracking
-const volSlider = $('np-volume');
-volSlider.addEventListener('mousedown', () => userTouchingVolume = true);
-volSlider.addEventListener('touchstart', () => userTouchingVolume = true, {passive: true});
-volSlider.addEventListener('mouseup', () => { userTouchingVolume = false; });
-volSlider.addEventListener('touchend', () => { userTouchingVolume = false; });
-volSlider.addEventListener('input', (e) => {
-  $('np-volume-label').textContent = Math.round(e.target.value * 100) + '%';
-  fetch('/api/music/control', { method: 'POST', headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({entity_id: activeZone.entity, action: 'volume', level: parseFloat(e.target.value)}) });
-});
-
-window.bensonMusic = {
-  ctrl(action) {
-    fetch('/api/music/control', { method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({entity_id: activeZone.entity, action}) }).then(() => setTimeout(refreshNowPlaying, 500));
-  },
-  togglePlay() {
-    const playing = $('np-play-btn').dataset.playing === '1';
-    this.ctrl(playing ? 'pause' : 'play');
-  },
-  play(media_id, media_type) {
-    fetch('/api/music/play', { method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({entity_id: activeZone.entity, media_id, media_type}) }).then(() => setTimeout(refreshNowPlaying, 1500));
-  },
-};
-
-// Search
-document.getElementById('searchForm').addEventListener('submit', async (e) => {
-  e.preventDefault();
-  const q = document.getElementById('searchQuery').value.trim();
-  const type = document.getElementById('searchType').value;
-  if (!q) return;
-  document.getElementById('searchResults').innerHTML = '<div class="text-secondary small">Searching…</div>';
-  try {
-    const r = await fetch('/api/music/search', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({query: q, media_type: type, limit: 12}) });
-    const j = await r.json();
-    const items = (j.results && j.results[type + 's']) || (j.results && j.results.items) || [];
-    if (!items.length) { document.getElementById('searchResults').innerHTML = '<div class="text-secondary small">No results.</div>'; return; }
-    document.getElementById('searchResults').innerHTML = items.map(it => {
-      const name = it.name || it.title || '(untitled)';
-      const sub = it.artists?.map(a => a.name || a).join(', ') || it.album?.name || it.media_type || '';
-      const img = it.image || it.metadata?.images?.[0]?.path;
-      const art = img ? `<img src="${img}" style="width:48px;height:48px;border-radius:4px;object-fit:cover" alt="">` : '<div style="width:48px;height:48px;background:#333;border-radius:4px"></div>';
-      return `<div class="d-flex gap-2 align-items-center mb-2 p-2" style="border:1px solid #444;border-radius:6px;cursor:pointer" onclick="bensonMusic.play('${(it.uri||'').replace(/'/g,'')}','${type}')">
-        ${art}
-        <div class="flex-grow-1"><div class="fw-semibold">${name}</div><div class="text-secondary small">${sub}</div></div>
-        <button class="btn btn-sm btn-warning">▶</button>
-      </div>`;
-    }).join('');
-  } catch(e) { document.getElementById('searchResults').innerHTML = `<div class="text-warning">Search error: ${e}</div>`; }
-});
-
-// Playlists
-async function loadPlaylists() {
-  document.getElementById('playlistsList').innerHTML = '<div class="text-secondary small">Loading…</div>';
-  try {
-    const r = await fetch('/api/music/playlists?limit=200');
-    const j = await r.json();
-    const items = j.playlists || [];
-    if (!items.length) { document.getElementById('playlistsList').innerHTML = '<div class="text-secondary small">No playlists in library.</div>'; return; }
-    document.getElementById('playlistsList').innerHTML = items.map(p => {
-      const name = p.name || '(untitled)';
-      const provider = (p.uri || '').split('://')[0] || '';
-      const img = p.image;
-      const art = img ? `<img src="${img}" style="width:40px;height:40px;border-radius:4px;object-fit:cover" alt="">` : '<div style="width:40px;height:40px;background:#333;border-radius:4px"></div>';
-      return `<div class="d-flex gap-2 align-items-center mb-2 p-2" style="border:1px solid #444;border-radius:6px;cursor:pointer" onclick="bensonMusic.play('${(p.uri||'').replace(/'/g,'')}','playlist')">
-        ${art}
-        <div class="flex-grow-1"><div class="fw-semibold">${name}</div><div class="text-secondary small">${provider}</div></div>
-        <button class="btn btn-sm btn-warning">▶</button>
-      </div>`;
-    }).join('');
-  } catch(e) { document.getElementById('playlistsList').innerHTML = `<div class="text-warning">Error: ${e}</div>`; }
-}
-document.getElementById('refreshPlaylists').addEventListener('click', loadPlaylists);
-
-// Init
-refreshNowPlaying();
-loadPlaylists();
-window.__musicTimers.push(setInterval(refreshNowPlaying, 8000));
+  loadStations();
+  loadLibrary(false);
+  window.__musicTimers.push(setInterval(refreshNowPlaying, 5000));
 })();
 </script>
 {% endblock %}
