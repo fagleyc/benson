@@ -216,15 +216,96 @@
     text-align: center; color: #889; padding: 1.5rem .5rem;
     font-size: .9rem;
   }
+
+  /* ─── Zone Strip (replaces the old dropdown) ─── */
+  .mu-zonestrip {
+    display: flex; gap: .55rem; overflow-x: auto; padding: .25rem .1rem .5rem;
+    scrollbar-width: thin;
+  }
+  .mu-zonechip {
+    flex: 0 0 auto; min-width: 168px; max-width: 320px;
+    background: #1a2128; border: 1px solid #2d3a47; border-radius: 8px;
+    padding: .5rem .65rem; display: flex; flex-direction: column; gap: .25rem;
+    cursor: pointer; user-select: none;
+    transition: border-color .15s, transform .12s, box-shadow .15s;
+    position: relative;
+  }
+  .mu-zonechip:hover { border-color: #4d5a68; }
+  .mu-zonechip.selected { border-color: #f39c12; box-shadow: 0 0 0 1px #f39c12 inset; }
+  .mu-zonechip.grouped { border-color: #7fdb9b; }
+  .mu-zonechip.drop-target { background: #243140; border-color: #f39c12; }
+  .mu-zonechip-head {
+    display: flex; align-items: center; gap: .35rem;
+    font-size: .8rem; color: #aab3bf; text-transform: uppercase;
+    letter-spacing: .05em;
+  }
+  .mu-zonechip-dot {
+    width: 8px; height: 8px; border-radius: 50%; background: #4d5a68;
+    flex: 0 0 8px;
+  }
+  .mu-zonechip-dot.playing { background: #7fdb9b; box-shadow: 0 0 6px #7fdb9b; }
+  .mu-zonechip-chain {
+    color: #7fdb9b; font-size: .85rem; line-height: 1;
+  }
+  .mu-zonechip-title {
+    color: #e8ecef; font-weight: 600; font-size: .92rem;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .mu-zonechip-sub {
+    color: #889; font-size: .75rem;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .mu-zonechip-controls {
+    display: flex; gap: .15rem; align-items: center; margin-top: .25rem;
+  }
+  .mu-zonechip-controls .mu-np-btn { padding: .1rem .4rem; font-size: .78rem; }
+  .mu-zonechip-vol { flex: 1 1 auto; margin-left: .25rem; }
+  .mu-zonechip-thumbs { display: flex; gap: .15rem; margin-left: auto; }
+  .mu-thumb-btn {
+    background: #2a3340; color: #ccd; border: 1px solid #3a4654;
+    border-radius: 4px; padding: .1rem .45rem; font-size: .85rem;
+    cursor: pointer; line-height: 1;
+  }
+  .mu-thumb-btn.up.active   { background: #f39c12; color: #1a1a1a; border-color: #f39c12; }
+  .mu-thumb-btn.down.active { background: #c0392b; color: #fff;    border-color: #c0392b; }
+  .mu-thumb-btn:hover { background: #34414f; }
+  .mu-zonechip-ungroup {
+    background: #2a3340; border: 1px dashed #4d5a68; color: #aab3bf;
+    border-radius: 8px; padding: .45rem .7rem; font-size: .82rem;
+    cursor: pointer; align-self: stretch;
+  }
+  .mu-zonechip-ungroup:hover { color: #f39c12; border-color: #f39c12; }
+
+  /* ─── Fitness badge ─── */
+  .mu-fitness {
+    position: absolute; top: .55rem; right: .55rem;
+    font-size: .68rem; font-weight: 700; letter-spacing: .03em;
+    padding: 1px 7px; border-radius: 9px;
+    background: rgba(0,0,0,.45); color: #fff;
+    border: 1px solid rgba(255,255,255,.22);
+  }
+  .mu-fitness.good { color: #7fdb9b; border-color: #7fdb9b; }
+  .mu-fitness.mid  { color: #f7d36b; border-color: #f7d36b; }
+  .mu-fitness.bad  { color: #ff8a7a; border-color: #ff8a7a; }
+
+  /* Expanded zone now-playing card (click chip to open) */
+  .mu-zone-expand {
+    margin-top: .35rem; padding: .55rem .65rem .65rem;
+    border-top: 1px dashed #2d3a47; display: none;
+  }
+  .mu-zonechip.expanded .mu-zone-expand { display: block; }
+  .mu-zone-expand-art {
+    width: 100%; max-width: 220px; aspect-ratio: 1/1; border-radius: 6px;
+    background: linear-gradient(135deg,#2a3340,#1f2730);
+    background-size: cover; background-position: center; margin: .25rem auto;
+  }
 </style>
 
-<!-- ─── Header + zone picker ─────────────────────────────────────────── -->
+<!-- ─── Header ────────────────────────────────────────────────────────── -->
 <div class="d-flex justify-content-between align-items-baseline mb-2 flex-wrap gap-2">
   <h2 class="mb-0">Music</h2>
   <div class="d-flex gap-2 align-items-center small">
-    <span class="text-secondary">Play on</span>
-    <select id="muZone" class="form-select form-select-sm bg-dark text-light border-secondary"
-            style="min-width: 180px"></select>
+    <span class="text-secondary" id="muSelSummary">tap a zone below to target it</span>
   </div>
 </div>
 <div class="text-secondary small mb-3">
@@ -242,16 +323,15 @@
   </div>
 </div>
 
-<!-- ─── Now playing strip ────────────────────────────────────────────── -->
+<!-- ─── Zone strip (target + now-playing inline) ─────────────────────── -->
 <div class="mu-section">
   <div class="mu-section-header">
-    <h3 class="mu-section-title">Now Playing</h3>
+    <h3 class="mu-section-title">Zones</h3>
     <div class="d-flex gap-2 align-items-center">
       <span class="mu-section-sub" id="muNpSummary">—</span>
-      <button class="btn btn-sm btn-outline-secondary" id="muNpShowAll">show all</button>
     </div>
   </div>
-  <div class="mu-np-strip" id="muNpStrip">
+  <div class="mu-zonestrip" id="muZoneStrip">
     <div class="mu-empty" style="flex:1">Loading zones…</div>
   </div>
 </div>
@@ -365,97 +445,256 @@
       {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   }
 
-  // ─── Zone picker ────────────────────────────────────────────────────
-  const zoneSel = document.getElementById('muZone');
-  ZONES.forEach(z => {
-    const o = document.createElement('option');
-    o.value = z.entity; o.textContent = z.label;
-    zoneSel.appendChild(o);
-  });
-  zoneSel.value = localStorage.getItem('benson_music_zone') || ZONES[0].entity;
-  zoneSel.addEventListener('change', () => {
-    localStorage.setItem('benson_music_zone', zoneSel.value);
-  });
-  function activeEntity() { return zoneSel.value; }
-  function activeLabel() {
-    const z = ZONES.find(x => x.entity === activeEntity());
-    return z ? z.label : 'zone';
+  // ─── Zone Strip state ───────────────────────────────────────────────
+  // Selected zones (chip-cards highlighted warning-orange). Persisted in
+  // localStorage as a comma-separated list of entity ids. Backwards-compat
+  // with the old single-zone localStorage key.
+  const _legacyZone = localStorage.getItem('benson_music_zone');
+  let selectedZones = new Set();
+  try {
+    const saved = JSON.parse(localStorage.getItem('benson_music_zones') || '[]');
+    if (Array.isArray(saved) && saved.length) {
+      saved.forEach(e => selectedZones.add(e));
+    } else if (_legacyZone) {
+      selectedZones.add(_legacyZone);
+    } else {
+      selectedZones.add(ZONES[0].entity);
+    }
+  } catch { selectedZones.add(ZONES[0].entity); }
+
+  // Map "what station_id is currently playing on this zone" — used by the
+  // thumb buttons. Populated when /stations/{id}/play fires from this UI.
+  const zoneStationMap = {};
+
+  // Cache of the latest /now-playing snapshot keyed by entity for thumb
+  // metadata (artist/title/uri) when the user mashes a thumb button.
+  const zoneNowPlaying = {};
+
+  // Per-zone expanded state (click a chip's title to expand).
+  const expandedZones = new Set();
+
+  function saveSelection() {
+    localStorage.setItem('benson_music_zones', JSON.stringify(Array.from(selectedZones)));
+    // Keep legacy key in sync so other pages that read it still work.
+    if (selectedZones.size === 1) {
+      localStorage.setItem('benson_music_zone', Array.from(selectedZones)[0]);
+    }
   }
 
-  // ─── Now-playing strip ──────────────────────────────────────────────
-  let showAllZones = false;
-  document.getElementById('muNpShowAll').addEventListener('click', (e) => {
-    showAllZones = !showAllZones;
-    e.target.textContent = showAllZones ? 'show fewer' : 'show all';
-    refreshNowPlaying();
-  });
+  function activeEntity() {
+    // The coordinator for play actions: first selected.
+    return Array.from(selectedZones)[0] || ZONES[0].entity;
+  }
+  function activeEntities() { return Array.from(selectedZones); }
+  function activeLabel() {
+    const ents = activeEntities();
+    if (!ents.length) return 'zone';
+    if (ents.length === 1) {
+      const z = ZONES.find(x => x.entity === ents[0]);
+      return z ? z.label : ents[0];
+    }
+    return `${ents.length} zones`;
+  }
 
+  // ─── Zone Strip render + interaction ────────────────────────────────
   async function refreshNowPlaying() {
     try {
       const r = await fetch('/api/music/now-playing');
       const j = await r.json();
       const zones = j.zones || [];
+      // Index now-playing snapshot by entity for thumb metadata lookup.
+      zones.forEach(z => { zoneNowPlaying[z.entity_id] = z; });
       const playing = zones.filter(z => z.playing);
-      // Default to currently active zones; collapsible "show all" reveals the rest.
-      const visible = showAllZones
-        ? zones
-        : (playing.length ? playing.slice(0,3) : zones.slice(0,1));
-      const strip = document.getElementById('muNpStrip');
-      strip.innerHTML = visible.map(z => renderNpCard(z)).join('') ||
-        '<div class="mu-empty" style="flex:1">Nothing playing.</div>';
+      renderZoneStrip(zones);
+      const playingCnt = playing.length;
+      const selCnt = selectedZones.size;
       document.getElementById('muNpSummary').textContent =
-        playing.length
-          ? `${playing.length} zone${playing.length===1?'':'s'} playing`
-          : 'idle';
-      // If a zone is playing and the user hasn't picked one yet, follow it
-      if (playing.length && !localStorage.getItem('benson_music_zone')) {
-        zoneSel.value = playing[0].entity_id;
-      }
+        (playingCnt ? `${playingCnt} playing · ` : 'idle · ') +
+        `${selCnt} selected`;
+      document.getElementById('muSelSummary').textContent =
+        selCnt ? `target: ${activeLabel()}` : 'select a zone below';
     } catch (e) { console.warn('now-playing:', e); }
   }
 
-  function renderNpCard(z) {
-    const active = z.entity_id === activeEntity();
-    const art = z.entity_picture
-      ? `<img class="mu-np-art" src="${escHtml(z.entity_picture)}" alt="">`
-      : `<div class="mu-np-art" style="display:flex;align-items:center;justify-content:center;color:#6c7a8a;font-size:1.4rem">♪</div>`;
-    const title = z.media_title || (z.playing ? '—' : 'idle');
+  function renderZoneStrip(zones) {
+    const strip = document.getElementById('muZoneStrip');
+    if (!zones.length) {
+      strip.innerHTML = '<div class="mu-empty" style="flex:1">No zones.</div>';
+      return;
+    }
+    // Detect any zone in a multi-member group → show "Ungroup all" chip.
+    const anyGrouped = zones.some(z => {
+      const gm = (z.attributes && z.attributes.group_members) || z.group_members || [];
+      return Array.isArray(gm) && gm.length > 1;
+    });
+    let html = zones.map(z => renderZoneChip(z)).join('');
+    if (anyGrouped) {
+      html += `<button class="mu-zonechip-ungroup" onclick="muUngroupAll()" title="Break all current groups">
+        ◇ Ungroup all
+      </button>`;
+    }
+    strip.innerHTML = html;
+    wireZoneChipEvents();
+  }
+
+  function fitnessClassForZone(stationId) { return null; /* zones don't show fitness */ }
+
+  function renderZoneChip(z) {
+    const ent = z.entity_id;
+    const selected = selectedZones.has(ent);
+    const playing = !!z.playing;
+    const gm = z.group_members || (z.attributes && z.attributes.group_members) || [];
+    const grouped = Array.isArray(gm) && gm.length > 1;
+    const expanded = expandedZones.has(ent);
+    const title = z.media_title || (playing ? '—' : 'idle');
     const sub = [z.media_artist, z.media_album_name].filter(Boolean).join(' · ') || '';
     const vol = (typeof z.volume === 'number') ? Math.round(z.volume*100) : 0;
-    const playBtn = z.playing ? '⏸' : '▶';
+    const playBtn = playing ? '⏸' : '▶';
+    const stationId = zoneStationMap[ent] || null;
+    // Thumb active state (we don't track which way the user thumbed
+    // historically client-side; just visually toggle on press).
+    const upActive = !!(z._thumb === 1);
+    const dnActive = !!(z._thumb === -1);
+
+    const expandBlock = expanded ? `
+      <div class="mu-zone-expand">
+        <div class="mu-zone-expand-art" style="${z.entity_picture ? `background-image:url('${escHtml(z.entity_picture)}')` : ''}"></div>
+        <div class="text-light small fw-bold">${escHtml(title)}</div>
+        <div class="text-secondary small">${escHtml(sub)}</div>
+        ${stationId ? `<div class="text-warning small mt-1">station #${stationId}</div>` : ''}
+      </div>` : '';
+
     return `
-      <div class="mu-np-card ${active?'active':''}" data-entity="${escHtml(z.entity_id)}">
-        ${art}
-        <div class="mu-np-meta">
-          <div class="mu-np-zone ${z.playing?'playing':''}">
-            ${escHtml(z.label)} · ${escHtml(z.state || 'unknown')}
-          </div>
-          <div class="mu-np-title">${escHtml(title)}</div>
-          <div class="mu-np-artist">${escHtml(sub)}</div>
-          <input type="range" class="mu-np-vol" min="0" max="1" step="0.02"
+      <div class="mu-zonechip ${selected?'selected':''} ${grouped?'grouped':''} ${expanded?'expanded':''}"
+           data-entity="${escHtml(ent)}"
+           draggable="true">
+        <div class="mu-zonechip-head">
+          <span class="mu-zonechip-dot ${playing?'playing':''}"></span>
+          <span>${escHtml(z.label)}</span>
+          ${grouped ? '<span class="mu-zonechip-chain" title="grouped">⛓</span>' : ''}
+          <span class="ms-auto small text-secondary">${escHtml(z.state || '')}</span>
+        </div>
+        <div class="mu-zonechip-title">${escHtml(title)}</div>
+        <div class="mu-zonechip-sub">${escHtml(sub)}</div>
+        <div class="mu-zonechip-controls">
+          <button class="mu-np-btn" onclick="event.stopPropagation();muTransport('${escHtml(ent)}','prev')" title="Previous">⏮</button>
+          <button class="mu-np-btn play" onclick="event.stopPropagation();muTransport('${escHtml(ent)}','${playing?'pause':'play'}')">${playBtn}</button>
+          <button class="mu-np-btn" onclick="event.stopPropagation();muTransport('${escHtml(ent)}','skip')" title="Next">⏭</button>
+          <input type="range" class="mu-zonechip-vol" min="0" max="1" step="0.02"
                  value="${z.volume ?? 0.3}"
-                 oninput="muVol('${escHtml(z.entity_id)}', this.value, this)">
-        </div>
-        <div class="mu-np-controls">
-          <div class="mu-np-row">
-            <button class="mu-np-btn" onclick="muTransport('${escHtml(z.entity_id)}','prev')" title="Previous">⏮</button>
-            <button class="mu-np-btn play" onclick="muTransport('${escHtml(z.entity_id)}','${z.playing?'pause':'play'}')">${playBtn}</button>
-            <button class="mu-np-btn" onclick="muTransport('${escHtml(z.entity_id)}','skip')" title="Next">⏭</button>
+                 oninput="muVol('${escHtml(ent)}', this.value, this)"
+                 onclick="event.stopPropagation()">
+          <div class="mu-zonechip-thumbs">
+            <button class="mu-thumb-btn up ${upActive?'active':''}"
+                    title="Thumbs up"
+                    onclick="event.stopPropagation();muThumb('${escHtml(ent)}', 1)">▲</button>
+            <button class="mu-thumb-btn down ${dnActive?'active':''}"
+                    title="Thumbs down — skip"
+                    onclick="event.stopPropagation();muThumb('${escHtml(ent)}', -1)">▼</button>
           </div>
-          <div class="text-secondary small text-center mt-1">${vol}%</div>
         </div>
+        <div class="text-secondary small mt-1">vol ${vol}%</div>
+        ${expandBlock}
       </div>`;
   }
 
-  // Click on a now-playing card → make it the active zone
-  document.getElementById('muNpStrip').addEventListener('click', (e) => {
-    const card = e.target.closest('.mu-np-card');
-    if (!card) return;
-    if (e.target.closest('button') || e.target.closest('input')) return;
-    zoneSel.value = card.dataset.entity;
-    localStorage.setItem('benson_music_zone', card.dataset.entity);
-    refreshNowPlaying();
-  });
+  function wireZoneChipEvents() {
+    const strip = document.getElementById('muZoneStrip');
+    strip.querySelectorAll('.mu-zonechip').forEach(chip => {
+      const ent = chip.dataset.entity;
+      chip.addEventListener('click', (e) => {
+        if (e.target.closest('button') || e.target.closest('input')) return;
+        // Plain click → toggle selection. Shift+click → keyboard fallback
+        // for drag-grouping: group with first selected.
+        if (e.shiftKey && selectedZones.size >= 1 && !selectedZones.has(ent)) {
+          const coord = Array.from(selectedZones)[0];
+          muGroupZones(coord, [ent]);
+          return;
+        }
+        if (e.detail === 2) {
+          // double-click → expand/collapse the chip's now-playing block.
+          if (expandedZones.has(ent)) expandedZones.delete(ent);
+          else expandedZones.add(ent);
+          refreshNowPlaying();
+          return;
+        }
+        if (selectedZones.has(ent)) selectedZones.delete(ent);
+        else selectedZones.add(ent);
+        if (!selectedZones.size) selectedZones.add(ent);  // keep at least one
+        saveSelection();
+        refreshNowPlaying();
+      });
+
+      // HTML5 drag → group A onto B (B becomes coordinator).
+      chip.addEventListener('dragstart', (e) => {
+        e.dataTransfer.setData('text/zone', ent);
+        e.dataTransfer.effectAllowed = 'link';
+      });
+      chip.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'link';
+        chip.classList.add('drop-target');
+      });
+      chip.addEventListener('dragleave', () => chip.classList.remove('drop-target'));
+      chip.addEventListener('drop', (e) => {
+        e.preventDefault();
+        chip.classList.remove('drop-target');
+        const source = e.dataTransfer.getData('text/zone');
+        if (!source || source === ent) return;
+        console.log('[zone-drag] grouping', source, 'under coordinator', ent);
+        muGroupZones(ent, [source]);
+      });
+    });
+  }
+
+  window.muGroupZones = async function(coordinator, members) {
+    try {
+      const r = await fetch('/api/music/group', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({coordinator, members}),
+      });
+      if (!r.ok) alert('Group failed: ' + await r.text());
+      setTimeout(refreshNowPlaying, 800);
+    } catch(e) { alert('Group error: ' + e); }
+  };
+  window.muUngroupAll = async function() {
+    try {
+      const r = await fetch('/api/music/ungroup-all', {method:'POST'});
+      if (!r.ok) alert('Ungroup failed: ' + await r.text());
+      setTimeout(refreshNowPlaying, 800);
+    } catch(e) { alert('Ungroup error: ' + e); }
+  };
+
+  // ─── Thumbs ─────────────────────────────────────────────────────────
+  window.muThumb = async function(entity, value) {
+    const z = zoneNowPlaying[entity] || {};
+    const body = {
+      thumb: value,
+      track_uri: z.media_content_id || null,
+      artist: z.media_artist || null,
+      album: z.media_album_name || null,
+      title: z.media_title || null,
+      zone: entity,
+      station_id: zoneStationMap[entity] || null,
+      source: 'manual',
+    };
+    if (!body.artist && !body.title && !body.track_uri) {
+      alert('Nothing playing to thumb on ' + entity);
+      return;
+    }
+    try {
+      const r = await fetch('/api/music/thumbs', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify(body),
+      });
+      if (!r.ok) { alert('Thumb failed: ' + await r.text()); return; }
+      z._thumb = value;
+      // Refresh sooner if we skipped (down).
+      setTimeout(refreshNowPlaying, value === -1 ? 700 : 200);
+      // Refresh station fitness badges if this is a station play.
+      if (zoneStationMap[entity]) refreshStationFitness(zoneStationMap[entity]);
+    } catch(e) { alert('Thumb error: ' + e); }
+  };
 
   window.muTransport = async function(entity, action) {
     try {
@@ -478,6 +717,9 @@
   };
 
   // ─── Stations ───────────────────────────────────────────────────────
+  // Cached fitness per station id so chips redraw without re-hitting the API.
+  const stationFitness = {};
+
   async function loadStations() {
     const wrap = document.getElementById('muStations');
     try {
@@ -486,9 +728,44 @@
       const items = j.stations || [];
       const cards = items.map(s => renderStation(s)).join('');
       wrap.innerHTML = cards + renderNewStationCard();
+      // Fire-and-forget fitness fetches; redraw badges as they resolve.
+      items.forEach(s => refreshStationFitness(s.id));
     } catch (e) {
       wrap.innerHTML = '<div class="mu-empty" style="grid-column:1/-1">Couldn\'t load stations.</div>';
     }
+  }
+
+  async function refreshStationFitness(id) {
+    try {
+      const r = await fetch(`/api/music/stations/${id}/fitness`);
+      if (!r.ok) return;
+      const j = await r.json();
+      stationFitness[id] = j;
+      // Patch the badge in-place without re-rendering the whole station grid.
+      const card = document.querySelector(`.mu-station[data-id="${id}"]`);
+      if (!card) return;
+      const old = card.querySelector('.mu-fitness');
+      if (old) old.remove();
+      const badge = renderFitnessBadge(j);
+      if (badge) card.insertAdjacentHTML('afterbegin', badge);
+    } catch (e) { /* silent */ }
+  }
+
+  function renderFitnessBadge(f) {
+    if (!f) return '';
+    const pct = f.last_n_pct_up;
+    if (pct === null || pct === undefined) {
+      // No data yet — surface that gently.
+      return `<span class="mu-fitness" title="No thumbs yet">— %</span>`;
+    }
+    let cls = 'bad';
+    if (pct >= 70) cls = 'good';
+    else if (pct >= 40) cls = 'mid';
+    const blocked = (f.top_blocked || []).slice(0,3);
+    const tip = blocked.length
+      ? `Top blocked: ${blocked.join(', ')}`
+      : `${f.thumbs_up}▲ / ${f.thumbs_down}▼ across last ${f.total}`;
+    return `<span class="mu-fitness ${cls}" title="${escHtml(tip)}">${pct}%</span>`;
   }
 
   function renderStation(s) {
@@ -499,10 +776,12 @@
       .concat((seeds.genres||[]).slice(0,2))
       .concat((seeds.decades||[]).slice(0,1))
       .concat((seeds.moods||[]).slice(0,1));
+    const badge = renderFitnessBadge(stationFitness[s.id]);
     return `
       <div class="mu-station" data-id="${s.id}"
            style="--from:${escHtml(palette.hex_from)};--to:${escHtml(palette.hex_to)}"
            onclick="muPlayStation(${s.id})">
+        ${badge}
         <div class="mu-station-name">${escHtml(s.name)}</div>
         ${artists.length ? `<div class="mu-station-seeds">${escHtml(artists.join(' · '))}</div>` : ''}
         ${tags.length ? `<div class="mu-station-tags">${tags.map(t => `<span class="mu-station-tag">${escHtml(t)}</span>`).join('')}</div>` : ''}
@@ -523,13 +802,15 @@
   }
 
   window.muPlayStation = async function(id) {
-    const entity = activeEntity();
+    const zones = activeEntities();
     try {
       const r = await fetch(`/api/music/stations/${id}/play`, {
         method: 'POST', headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({zone: entity}),
+        body: JSON.stringify({zones}),
       });
       if (!r.ok) { const t = await r.text(); alert('Station start failed: ' + t); return; }
+      // Track which station is playing where, so thumbs can attribute.
+      zones.forEach(z => { zoneStationMap[z] = id; });
       setTimeout(refreshNowPlaying, 1500);
     } catch(e) { alert('Station start error: ' + e); }
   };
@@ -633,15 +914,18 @@
   document.getElementById('muLibRefresh').addEventListener('click', () => loadLibrary(true));
 
   window.muPlayMedia = async function(uri, type, mode) {
+    const zones = activeEntities();
     try {
       const r = await fetch('/api/music/play', {
         method: 'POST', headers: {'Content-Type':'application/json'},
         body: JSON.stringify({
-          zone: activeEntity(), media_id_or_query: uri,
+          zones, media_id_or_query: uri,
           content_type: type, queue_mode: mode || 'replace',
         }),
       });
       if (!r.ok) { alert('Play failed: ' + await r.text()); return; }
+      // Ad-hoc playback drops any station-attribution mapping.
+      zones.forEach(z => { delete zoneStationMap[z]; });
       setTimeout(refreshNowPlaying, 1500);
     } catch(e) { alert('Play error: ' + e); }
   };
@@ -676,7 +960,7 @@
       const r = await fetch('/api/music/play', {
         method: 'POST', headers: {'Content-Type':'application/json'},
         body: JSON.stringify({
-          zone: activeEntity(), media_id_or_query: uri,
+          zones: activeEntities(), media_id_or_query: uri,
           content_type: 'playlist', queue_mode: 'replace',
           radio_mode: true,
         }),
@@ -793,7 +1077,7 @@
       const r = await fetch('/api/music/play', {
         method: 'POST', headers: {'Content-Type':'application/json'},
         body: JSON.stringify({
-          zone: activeEntity(),
+          zones: activeEntities(),
           media_id_or_query: uri || name,
           content_type: 'artist',
           queue_mode: 'replace',

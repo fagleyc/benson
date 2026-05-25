@@ -44,7 +44,11 @@ logger = logging.getLogger("benson.main")
 app = FastAPI(title="Benson Middleware", version="0.1.0")
 # music_router first so its new /api/music/play, /search, /stations endpoints
 # take precedence over the legacy ones in data_api at the same paths.
-from music_handler import router as _music_router_early, ensure_schema as _music_ensure_schema
+from music_handler import (
+    router as _music_router_early,
+    ensure_schema as _music_ensure_schema,
+    ensure_thumbs_schema as _music_thumbs_ensure_schema,
+)
 app.include_router(_music_router_early)
 app.include_router(data_router)
 app.include_router(hub_router)
@@ -78,6 +82,7 @@ async def _signal_startup():
     _sa_ensure_schema()
     _autofix_ensure_schema()
     _music_ensure_schema()
+    _music_thumbs_ensure_schema()
     start_scheduler()
     from wyoming_kokoro import start as start_wyoming_kokoro
     start_wyoming_kokoro()
