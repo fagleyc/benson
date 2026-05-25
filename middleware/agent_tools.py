@@ -503,11 +503,23 @@ async def announce(
     },
 )
 async def group_sonos(coordinator: str, members: list[str]) -> dict:
-    await ha_call_service(
-        "media_player",
-        "join",
-        {"entity_id": coordinator, "group_members": members},
-    )
+    # HA's media_player.join races on back-to-back calls and intermittently
+    # returns 500. The second attempt almost always succeeds — single
+    # retry with a short backoff makes this self-healing.
+    import asyncio
+    try:
+        await ha_call_service(
+            "media_player",
+            "join",
+            {"entity_id": coordinator, "group_members": members},
+        )
+    except Exception:
+        await asyncio.sleep(1.0)
+        await ha_call_service(
+            "media_player",
+            "join",
+            {"entity_id": coordinator, "group_members": members},
+        )
     return {"ok": True, "coordinator": coordinator, "members": members}
 
 

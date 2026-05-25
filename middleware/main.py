@@ -35,7 +35,7 @@ from ha_intents import (
 from hub import router as hub_router
 from instacart import InstacartClient
 from memory import MemoryStore
-from output_routing import pick_satellite_output, pick_speak_zone
+from output_routing import pick_speak_zone
 from recipes import RecipeIngester
 
 configure_logging()
@@ -206,15 +206,18 @@ async def handle_conversation(request: Request) -> dict[str, Any]:
 
     # Voice-input → speak the response. Preference order:
     #   1) explicit output_zone_override (admin / debugging),
-    #   2) the satellite that woke us (keeps reply off grouped Sonos),
-    #   3) the room's Sonos zone (unmiced rooms / hub).
+    #   2) the room's Sonos zone via pick_speak_zone (kitchen → kitchen
+    #      Sonos; unknown / hub → Move first per Casey 2026-05-23 rule).
+    #
+    # We do NOT route to the assist_satellite entity directly: that's
+    # not a media_player, so play_media fails silently. The kitchen
+    # ReSpeaker has no connected speaker yet anyway — when it does,
+    # HA's own Assist pipeline already plays TTS through it and the
+    # benson_agent integration can set voice_input=False to avoid
+    # double-playback.
     spoken_on: str | None = None
     if voice_input:
         target = output_zone_override
-        if not target:
-            target = await pick_satellite_output(room, satellite_id)
-            if target:
-                logger.info(f"voice-output via satellite: {target}")
         if not target:
             target, _chain = await pick_speak_zone(room)
         if target:

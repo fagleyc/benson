@@ -31,6 +31,10 @@ import torch
 
 logger = logging.getLogger("benson.kokoro")
 
+# Phonemizer emits "words count mismatch" warnings on every punctuation-
+# heavy line — harmless and floods the journal. Pin to ERROR.
+logging.getLogger("phonemizer").setLevel(logging.ERROR)
+
 AUDIO_DIR = Path("/opt/benson/middleware/audio")
 AUDIO_DIR.mkdir(parents=True, exist_ok=True)
 
