@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Benson — Fagley household AI assistant</title>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+         max-width: 720px; margin: 2rem auto; padding: 0 1.25rem; line-height: 1.55;
+         color: #222; background: #fafafa; }
+  h1 { color: #2c3e50; border-bottom: 2px solid #f39c12; padding-bottom: .35rem; }
+  h2 { color: #2c3e50; margin-top: 2rem; }
+  a { color: #1f6feb; }
+  .meta { color: #888; font-size: .9rem; }
+  code { background: #eee; padding: .1rem .35rem; border-radius: 3px; font-size: .92rem; }
+  ul { padding-left: 1.4rem; }
+  li { margin: .35rem 0; }
+</style>
+</head>
+<body>
+<h1>Benson</h1>
+<p class="meta">A private household AI assistant. Single-family install. Local-only.</p>
+
+<h2>What it is</h2>
+<p>
+  Benson is a private, single-tenant household AI assistant built and run
+  by the Fagley family in Colorado Springs, Colorado. It lives on a single
+  on-premises server (an NVIDIA DGX Spark) inside one family's home and
+  is reachable only over that home's local network. There is no public
+  sign-up, no SaaS deployment, no third-party access. It is not a
+  commercial product.
+</p>
+
+<h2>Who uses it</h2>
+<p>
+  Four people, all members of one household:
+</p>
+<ul>
+  <li>Casey Fagley — owner and developer</li>
+  <li>Lindsey Fagley — spouse</li>
+  <li>Cole Fagley — child</li>
+  <li>Zander Fagley — child</li>
+</ul>
+<p>
+  Each household member can individually grant Benson read access to their
+  own Google account (Gmail read-only and Calendar read+write). Grants are
+  per-user; one member's grant never gives Benson access to another
+  member's data. Anyone in the household can revoke the grant at any
+  time at <a href="https://myaccount.google.com/permissions">myaccount.google.com/permissions</a>.
+</p>
+
+<h2>What it does with Google data</h2>
+<p>
+  Benson uses Google scopes only to answer the household member's own
+  natural-language questions about their own inbox and calendar, and to
+  add calendar events when the same household member explicitly asks
+  Benson to do so. Specifically:
+</p>
+<ul>
+  <li>
+    <strong><code>gmail.readonly</code></strong> — used to answer queries like
+    "search recent email from the insurance agent" or "did Cole's school
+    send anything today." Benson does not send mail, does not index mail,
+    does not store mail, and does not transmit mail outside the user's
+    home network.
+  </li>
+  <li>
+    <strong><code>calendar.events</code></strong> and
+    <strong><code>calendar.readonly</code></strong> — used to answer
+    scheduling questions ("what's on the calendar tomorrow") and to add
+    events the user explicitly requests ("add a dentist appointment for
+    Lindsey next Friday at 3 PM"). Writes always confirm event details
+    before committing.
+  </li>
+  <li>
+    <strong><code>openid</code></strong>,
+    <strong><code>userinfo.email</code></strong>,
+    <strong><code>userinfo.profile</code></strong> — used only to display
+    the connected Google account's email and name on Benson's admin page
+    so the user can confirm they linked the correct account.
+  </li>
+</ul>
+
+<h2>Where the data goes</h2>
+<p>
+  Nowhere outside the home. Benson runs on a single DGX Spark server in
+  the Fagley basement, connected to one home network. There is no cloud
+  storage, no analytics provider, no telemetry endpoint, no third-party
+  share. Calendar event metadata is cached in RAM for at most 15 minutes
+  to answer scheduling questions; nothing is persisted to disk past that
+  window. Email content fetched per-query is never persisted at all.
+</p>
+
+<h2>Contact</h2>
+<p>
+  Casey Fagley — <a href="mailto:caseyfagley@gmail.com">caseyfagley@gmail.com</a>
+</p>
+
+<p class="meta">
+  Privacy policy: <a href="./privacy.html">/privacy.html</a> ·
+  Source: <a href="https://github.com/fagleyc/benson">github.com/fagleyc/benson</a>
+</p>
+</body>
+</html>
