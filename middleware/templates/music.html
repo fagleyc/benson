@@ -136,6 +136,11 @@
     border-radius: 5px; font-size: .75rem; cursor: pointer;
   }
   .mu-station-del:hover { background: rgba(0,0,0,.5); color: #fff; }
+  .mu-station-thumbs {
+    font-size: .72rem; color: rgba(255,255,255,.85);
+    background: rgba(0,0,0,.35); padding: .15rem .45rem; border-radius: 10px;
+    border: 1px solid rgba(255,255,255,.2); white-space: nowrap;
+  }
   .mu-station.new {
     background: #1a2128; border: 2px dashed #3a4654; color: #aab3bf;
     align-items: center; justify-content: center; min-height: 165px;
@@ -217,26 +222,28 @@
     font-size: .9rem;
   }
 
-  /* ─── Zone Strip (replaces the old dropdown) ─── */
+  /* ─── Zone Strip ─── */
   .mu-zonestrip {
-    display: flex; gap: .55rem; overflow-x: auto; padding: .25rem .1rem .5rem;
-    scrollbar-width: thin;
+    display: grid; gap: .65rem;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    padding: .25rem .1rem .5rem;
   }
   .mu-zonechip {
-    flex: 0 0 auto; min-width: 168px; max-width: 320px;
-    background: #1a2128; border: 1px solid #2d3a47; border-radius: 8px;
-    padding: .5rem .65rem; display: flex; flex-direction: column; gap: .25rem;
-    cursor: pointer; user-select: none;
-    transition: border-color .15s, transform .12s, box-shadow .15s;
+    background: #1a2128; border: 1px solid #2d3a47; border-radius: 10px;
+    padding: .6rem .7rem; display: flex; flex-direction: column; gap: .35rem;
+    user-select: none;
+    transition: border-color .15s, box-shadow .15s, background .15s;
     position: relative;
   }
   .mu-zonechip:hover { border-color: #4d5a68; }
   .mu-zonechip.selected { border-color: #f39c12; box-shadow: 0 0 0 1px #f39c12 inset; }
-  .mu-zonechip.grouped { border-color: #7fdb9b; }
+  .mu-zonechip.grouped  { border-color: #7fdb9b; }
+  .mu-zonechip.grouped.coordinator { box-shadow: 0 0 0 1px #7fdb9b inset; }
   .mu-zonechip.drop-target { background: #243140; border-color: #f39c12; }
+  .mu-zonechip.unavailable { opacity: .5; }
   .mu-zonechip-head {
-    display: flex; align-items: center; gap: .35rem;
-    font-size: .8rem; color: #aab3bf; text-transform: uppercase;
+    display: flex; align-items: center; gap: .4rem;
+    font-size: .78rem; color: #aab3bf; text-transform: uppercase;
     letter-spacing: .05em;
   }
   .mu-zonechip-dot {
@@ -244,22 +251,26 @@
     flex: 0 0 8px;
   }
   .mu-zonechip-dot.playing { background: #7fdb9b; box-shadow: 0 0 6px #7fdb9b; }
-  .mu-zonechip-chain {
-    color: #7fdb9b; font-size: .85rem; line-height: 1;
+  .mu-zonechip-dot.off     { background: #6b3035; }
+  .mu-zonechip-name { font-weight: 600; color: #cfd5dc; }
+  .mu-zonechip-grouptag {
+    margin-left: auto; font-size: .68rem; color: #7fdb9b;
+    background: rgba(127,219,155,.10); border: 1px solid rgba(127,219,155,.3);
+    border-radius: 10px; padding: 0 .45rem; letter-spacing: .04em;
   }
   .mu-zonechip-title {
-    color: #e8ecef; font-weight: 600; font-size: .92rem;
+    color: #e8ecef; font-weight: 600; font-size: .93rem;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
   .mu-zonechip-sub {
-    color: #889; font-size: .75rem;
+    color: #889; font-size: .76rem;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
-  .mu-zonechip-controls {
-    display: flex; gap: .15rem; align-items: center; margin-top: .25rem;
+  /* Transport row (prev/play/next + thumbs) */
+  .mu-zonechip-transport {
+    display: flex; gap: .25rem; align-items: center; margin-top: .15rem;
   }
-  .mu-zonechip-controls .mu-np-btn { padding: .1rem .4rem; font-size: .78rem; }
-  .mu-zonechip-vol { flex: 1 1 auto; margin-left: .25rem; }
+  .mu-zonechip-transport .mu-np-btn { padding: .15rem .5rem; font-size: .85rem; }
   .mu-zonechip-thumbs { display: flex; gap: .15rem; margin-left: auto; }
   .mu-thumb-btn {
     background: #2a3340; color: #ccd; border: 1px solid #3a4654;
@@ -269,12 +280,49 @@
   .mu-thumb-btn.up.active   { background: #f39c12; color: #1a1a1a; border-color: #f39c12; }
   .mu-thumb-btn.down.active { background: #c0392b; color: #fff;    border-color: #c0392b; }
   .mu-thumb-btn:hover { background: #34414f; }
-  .mu-zonechip-ungroup {
-    background: #2a3340; border: 1px dashed #4d5a68; color: #aab3bf;
-    border-radius: 8px; padding: .45rem .7rem; font-size: .82rem;
-    cursor: pointer; align-self: stretch;
+  /* Volume row (slider + numeric label) */
+  .mu-zonechip-volrow {
+    display: flex; gap: .5rem; align-items: center; margin-top: .25rem;
   }
-  .mu-zonechip-ungroup:hover { color: #f39c12; border-color: #f39c12; }
+  .mu-zonechip-volrow .vol-icon { font-size: .8rem; color: #889; }
+  .mu-zonechip-vol { flex: 1 1 auto; height: 4px; }
+  .mu-zonechip-volnum {
+    color: #aab3bf; font-size: .72rem; min-width: 28px; text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+  /* Footer action row: select toggle + group/leave + expand caret */
+  .mu-zonechip-footer {
+    display: flex; gap: .35rem; align-items: center; margin-top: .25rem;
+    border-top: 1px dashed #2d3a47; padding-top: .35rem;
+  }
+  .mu-mini-btn {
+    background: transparent; color: #889;
+    border: 1px solid #3a4654; border-radius: 5px;
+    padding: .15rem .55rem; font-size: .72rem; letter-spacing: .03em;
+    cursor: pointer; text-transform: uppercase;
+  }
+  .mu-mini-btn:hover { color: #e8ecef; border-color: #5a6878; }
+  .mu-mini-btn.active { background: #f39c12; color: #1a1a1a; border-color: #f39c12; }
+  .mu-mini-btn.danger:hover { color: #ff8a7a; border-color: #ff8a7a; }
+  .mu-mini-btn.good { color: #7fdb9b; border-color: rgba(127,219,155,.5); }
+  .mu-mini-btn.good:hover { background: rgba(127,219,155,.15); }
+  .mu-caret { margin-left: auto; background: none; border: none;
+    color: #889; font-size: 1rem; cursor: pointer; padding: 0 .35rem; }
+  .mu-caret:hover { color: #f39c12; }
+
+  /* Sticky multi-zone toolbar (when 2+ zones selected) */
+  .mu-multitoolbar {
+    position: sticky; top: 4px; z-index: 30;
+    display: flex; gap: .65rem; align-items: center;
+    background: #131820; border: 1px solid #f39c12; border-radius: 8px;
+    padding: .5rem .75rem; margin-bottom: .5rem;
+    box-shadow: 0 4px 14px rgba(0,0,0,.4);
+  }
+  .mu-multitoolbar .label { color: #f39c12; font-weight: 600; font-size: .82rem; }
+  .mu-multitoolbar .sub { color: #aab3bf; font-size: .78rem; }
+  .mu-multitoolbar .grow { flex: 1 1 auto; }
+  .mu-multitoolbar input[type=range] { width: 140px; }
+  .mu-multitoolbar .mu-np-btn { padding: .15rem .55rem; font-size: .85rem; }
 
   /* ─── Fitness badge ─── */
   .mu-fitness {
@@ -331,8 +379,9 @@
       <span class="mu-section-sub" id="muNpSummary">—</span>
     </div>
   </div>
+  <div id="muMultiToolbar"></div>
   <div class="mu-zonestrip" id="muZoneStrip">
-    <div class="mu-empty" style="flex:1">Loading zones…</div>
+    <div class="mu-empty" style="grid-column:1/-1">Loading zones…</div>
   </div>
 </div>
 
@@ -516,85 +565,117 @@
     } catch (e) { console.warn('now-playing:', e); }
   }
 
+  // Last full zones snapshot — used by toolbar to compute group state.
+  let _zonesSnapshot = [];
+
   function renderZoneStrip(zones) {
+    _zonesSnapshot = zones;
     const strip = document.getElementById('muZoneStrip');
     if (!zones.length) {
-      strip.innerHTML = '<div class="mu-empty" style="flex:1">No zones.</div>';
+      strip.innerHTML = '<div class="mu-empty" style="grid-column:1/-1">No zones.</div>';
+      renderMultiToolbar();
       return;
     }
-    // Detect any zone in a multi-member group → show "Ungroup all" chip.
-    const anyGrouped = zones.some(z => {
-      const gm = (z.attributes && z.attributes.group_members) || z.group_members || [];
-      return Array.isArray(gm) && gm.length > 1;
-    });
-    let html = zones.map(z => renderZoneChip(z)).join('');
-    if (anyGrouped) {
-      html += `<button class="mu-zonechip-ungroup" onclick="muUngroupAll()" title="Break all current groups">
-        ◇ Ungroup all
-      </button>`;
-    }
-    strip.innerHTML = html;
+    strip.innerHTML = zones.map(z => renderZoneChip(z, zones)).join('');
     wireZoneChipEvents();
+    renderMultiToolbar();
   }
 
-  function fitnessClassForZone(stationId) { return null; /* zones don't show fitness */ }
+  function groupCoordinator(entity, zones) {
+    // group_members[0] is the coordinator by Sonos convention.
+    const z = zones.find(x => x.entity_id === entity);
+    if (!z) return entity;
+    const gm = z.group_members || [];
+    return (Array.isArray(gm) && gm.length) ? gm[0] : entity;
+  }
 
-  function renderZoneChip(z) {
+  function groupLabel(coordEnt, zones) {
+    const coord = zones.find(z => z.entity_id === coordEnt);
+    if (!coord) return '';
+    const gm = coord.group_members || [];
+    if (!Array.isArray(gm) || gm.length <= 1) return '';
+    const names = gm
+      .map(e => (zones.find(z => z.entity_id === e) || {}).label || e)
+      .filter(Boolean);
+    return names.join(' + ');
+  }
+
+  function renderZoneChip(z, zones) {
     const ent = z.entity_id;
     const selected = selectedZones.has(ent);
     const playing = !!z.playing;
-    const gm = z.group_members || (z.attributes && z.attributes.group_members) || [];
+    const gm = z.group_members || [];
     const grouped = Array.isArray(gm) && gm.length > 1;
-    const expanded = expandedZones.has(ent);
+    const coord = groupCoordinator(ent, zones);
+    const isCoord = grouped && coord === ent;
+    const unavailable = z.state === 'unavailable';
     const title = z.media_title || (playing ? '—' : 'idle');
     const sub = [z.media_artist, z.media_album_name].filter(Boolean).join(' · ') || '';
-    const vol = (typeof z.volume === 'number') ? Math.round(z.volume*100) : 0;
+    const vol = (typeof z.volume === 'number') ? Math.round(z.volume * 100) : 0;
     const playBtn = playing ? '⏸' : '▶';
-    const stationId = zoneStationMap[ent] || null;
-    // Thumb active state (we don't track which way the user thumbed
-    // historically client-side; just visually toggle on press).
     const upActive = !!(z._thumb === 1);
     const dnActive = !!(z._thumb === -1);
 
-    const expandBlock = expanded ? `
-      <div class="mu-zone-expand">
-        <div class="mu-zone-expand-art" style="${z.entity_picture ? `background-image:url('${escHtml(z.entity_picture)}')` : ''}"></div>
-        <div class="text-light small fw-bold">${escHtml(title)}</div>
-        <div class="text-secondary small">${escHtml(sub)}</div>
-        ${stationId ? `<div class="text-warning small mt-1">station #${stationId}</div>` : ''}
-      </div>` : '';
+    // Group/Leave button logic:
+    //   - In a group → "Leave group" (ungroups just this zone).
+    //   - Not in a group, ≥1 other zone selected (and not this one) →
+    //       "Join group" (joins this zone to the selection coordinator).
+    //   - Otherwise hidden.
+    const others = Array.from(selectedZones).filter(e => e !== ent);
+    let groupBtn = '';
+    if (grouped) {
+      groupBtn = `<button class="mu-mini-btn danger" data-act="leave"
+                   title="Leave this group">⛓ Leave</button>`;
+    } else if (others.length >= 1) {
+      groupBtn = `<button class="mu-mini-btn good" data-act="join"
+                   title="Join this zone to the selected group">+ Join</button>`;
+    }
+
+    const grouptag = grouped
+      ? `<span class="mu-zonechip-grouptag" title="${escHtml(groupLabel(coord, zones))}">
+           ${isCoord ? 'LEADER' : 'GROUPED'}
+         </span>`
+      : '';
+
+    const dot = unavailable ? 'off' : (playing ? 'playing' : '');
 
     return `
-      <div class="mu-zonechip ${selected?'selected':''} ${grouped?'grouped':''} ${expanded?'expanded':''}"
+      <div class="mu-zonechip ${selected?'selected':''} ${grouped?'grouped':''} ${isCoord?'coordinator':''} ${unavailable?'unavailable':''}"
            data-entity="${escHtml(ent)}"
-           draggable="true">
+           draggable="${unavailable?'false':'true'}">
         <div class="mu-zonechip-head">
-          <span class="mu-zonechip-dot ${playing?'playing':''}"></span>
-          <span>${escHtml(z.label)}</span>
-          ${grouped ? '<span class="mu-zonechip-chain" title="grouped">⛓</span>' : ''}
-          <span class="ms-auto small text-secondary">${escHtml(z.state || '')}</span>
+          <span class="mu-zonechip-dot ${dot}"></span>
+          <span class="mu-zonechip-name">${escHtml(z.label)}</span>
+          ${grouptag}
         </div>
         <div class="mu-zonechip-title">${escHtml(title)}</div>
-        <div class="mu-zonechip-sub">${escHtml(sub)}</div>
-        <div class="mu-zonechip-controls">
-          <button class="mu-np-btn" onclick="event.stopPropagation();muTransport('${escHtml(ent)}','prev')" title="Previous">⏮</button>
-          <button class="mu-np-btn play" onclick="event.stopPropagation();muTransport('${escHtml(ent)}','${playing?'pause':'play'}')">${playBtn}</button>
-          <button class="mu-np-btn" onclick="event.stopPropagation();muTransport('${escHtml(ent)}','skip')" title="Next">⏭</button>
-          <input type="range" class="mu-zonechip-vol" min="0" max="1" step="0.02"
-                 value="${z.volume ?? 0.3}"
-                 oninput="muVol('${escHtml(ent)}', this.value, this)"
-                 onclick="event.stopPropagation()">
+        <div class="mu-zonechip-sub">${escHtml(sub) || '&nbsp;'}</div>
+
+        <div class="mu-zonechip-transport">
+          <button class="mu-np-btn" data-act="prev"  title="Previous">⏮</button>
+          <button class="mu-np-btn play" data-act="toggle">${playBtn}</button>
+          <button class="mu-np-btn" data-act="skip"  title="Next">⏭</button>
           <div class="mu-zonechip-thumbs">
-            <button class="mu-thumb-btn up ${upActive?'active':''}"
-                    title="Thumbs up"
-                    onclick="event.stopPropagation();muThumb('${escHtml(ent)}', 1)">▲</button>
-            <button class="mu-thumb-btn down ${dnActive?'active':''}"
-                    title="Thumbs down — skip"
-                    onclick="event.stopPropagation();muThumb('${escHtml(ent)}', -1)">▼</button>
+            <button class="mu-thumb-btn up   ${upActive?'active':''}" data-act="thumb-up"   title="Thumbs up — remember this track">👍</button>
+            <button class="mu-thumb-btn down ${dnActive?'active':''}" data-act="thumb-down" title="Thumbs down — skip + never play again">👎</button>
           </div>
         </div>
-        <div class="text-secondary small mt-1">vol ${vol}%</div>
-        ${expandBlock}
+
+        <div class="mu-zonechip-volrow">
+          <span class="vol-icon">🔈</span>
+          <input type="range" class="mu-zonechip-vol" min="0" max="1" step="0.02"
+                 value="${z.volume ?? 0.3}" data-act="vol">
+          <span class="mu-zonechip-volnum">${vol}%</span>
+        </div>
+
+        <div class="mu-zonechip-footer">
+          <button class="mu-mini-btn ${selected?'active':''}" data-act="select"
+                  title="${selected?'Deselect':'Select for play'}">
+            ${selected?'✓ Selected':'Select'}
+          </button>
+          ${groupBtn}
+          <button class="mu-caret" data-act="expand" title="Toggle expanded view">▾</button>
+        </div>
       </div>`;
   }
 
@@ -602,30 +683,44 @@
     const strip = document.getElementById('muZoneStrip');
     strip.querySelectorAll('.mu-zonechip').forEach(chip => {
       const ent = chip.dataset.entity;
+
+      // Centralised action dispatcher — all buttons/inputs carry data-act.
+      // Stops the click semantics overload (no more shift-click/dbl-click).
       chip.addEventListener('click', (e) => {
-        if (e.target.closest('button') || e.target.closest('input')) return;
-        // Plain click → toggle selection. Shift+click → keyboard fallback
-        // for drag-grouping: group with first selected.
-        if (e.shiftKey && selectedZones.size >= 1 && !selectedZones.has(ent)) {
-          const coord = Array.from(selectedZones)[0];
-          muGroupZones(coord, [ent]);
-          return;
+        const trigger = e.target.closest('[data-act]');
+        if (!trigger) return;
+        const act = trigger.dataset.act;
+        e.stopPropagation();
+        switch (act) {
+          case 'prev':       return muTransport(ent, 'prev');
+          case 'toggle': {
+            const z = _zonesSnapshot.find(x => x.entity_id === ent);
+            return muTransport(ent, z && z.playing ? 'pause' : 'play');
+          }
+          case 'skip':       return muTransport(ent, 'skip');
+          case 'thumb-up':   return muThumb(ent, 1);
+          case 'thumb-down': return muThumb(ent, -1);
+          case 'select':     return muToggleSelect(ent);
+          case 'join':       return muJoinSelected(ent);
+          case 'leave':      return muLeaveGroup(ent);
+          case 'expand':     return muToggleExpand(ent);
         }
-        if (e.detail === 2) {
-          // double-click → expand/collapse the chip's now-playing block.
-          if (expandedZones.has(ent)) expandedZones.delete(ent);
-          else expandedZones.add(ent);
-          refreshNowPlaying();
-          return;
-        }
-        if (selectedZones.has(ent)) selectedZones.delete(ent);
-        else selectedZones.add(ent);
-        if (!selectedZones.size) selectedZones.add(ent);  // keep at least one
-        saveSelection();
-        refreshNowPlaying();
       });
 
-      // HTML5 drag → group A onto B (B becomes coordinator).
+      // Volume slider has its own input handler (live drag).
+      const vol = chip.querySelector('[data-act=vol]');
+      if (vol) {
+        vol.addEventListener('input', () => {
+          // Live numeric update without re-rendering.
+          const pct = Math.round(parseFloat(vol.value) * 100);
+          const num = chip.querySelector('.mu-zonechip-volnum');
+          if (num) num.textContent = pct + '%';
+          muVol(ent, vol.value);
+        });
+        vol.addEventListener('click', e => e.stopPropagation());
+      }
+
+      // Drag-and-drop grouping still supported as a power-user shortcut.
       chip.addEventListener('dragstart', (e) => {
         e.dataTransfer.setData('text/zone', ent);
         e.dataTransfer.effectAllowed = 'link';
@@ -641,11 +736,109 @@
         chip.classList.remove('drop-target');
         const source = e.dataTransfer.getData('text/zone');
         if (!source || source === ent) return;
-        console.log('[zone-drag] grouping', source, 'under coordinator', ent);
         muGroupZones(ent, [source]);
       });
     });
   }
+
+  // Plain Select tap = single-zone selection (replaces the previous one).
+  // Casey 2026-05-30: tapping another speaker should switch to it, not
+  // accumulate. Multi-zone selection is now explicit via the per-chip
+  // "+ Join" button or the multi-zone toolbar.
+  function muToggleSelect(ent) {
+    if (selectedZones.size === 1 && selectedZones.has(ent)) return;
+    selectedZones = new Set([ent]);
+    saveSelection();
+    refreshNowPlaying();
+  }
+
+  function muToggleExpand(ent) {
+    if (expandedZones.has(ent)) expandedZones.delete(ent);
+    else expandedZones.add(ent);
+    refreshNowPlaying();
+  }
+
+  // "Join" — pick a coordinator from the currently-selected zones (excluding
+  // this chip) and group this zone under it.
+  window.muJoinSelected = function(ent) {
+    const others = Array.from(selectedZones).filter(e => e !== ent);
+    if (!others.length) {
+      alert('Select another zone first to act as the group leader.');
+      return;
+    }
+    muGroupZones(others[0], [ent]);
+  };
+
+  // "Leave" — ungroup just this single zone from its current Sonos group.
+  window.muLeaveGroup = async function(ent) {
+    try {
+      const r = await fetch('/api/music/ungroup-all', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({entities: [ent]}),
+      });
+      if (!r.ok) alert('Leave failed: ' + await r.text());
+      setTimeout(refreshNowPlaying, 700);
+    } catch (e) { alert('Leave error: ' + e); }
+  };
+
+  // ─── Sticky multi-zone toolbar ──────────────────────────────────────
+  function renderMultiToolbar() {
+    const host = document.getElementById('muMultiToolbar');
+    if (!host) return;
+    const sel = Array.from(selectedZones);
+    if (sel.length < 2) { host.innerHTML = ''; return; }
+    const playingAny = sel.some(e => {
+      const z = _zonesSnapshot.find(x => x.entity_id === e);
+      return z && z.playing;
+    });
+    // Average volume across selection for the master slider.
+    const vols = sel.map(e => {
+      const z = _zonesSnapshot.find(x => x.entity_id === e);
+      return (z && typeof z.volume === 'number') ? z.volume : null;
+    }).filter(v => v !== null);
+    const avgVol = vols.length ? vols.reduce((a,b)=>a+b,0)/vols.length : 0.3;
+    const labels = sel.map(e => {
+      const z = _zonesSnapshot.find(x => x.entity_id === e);
+      return z ? z.label : e;
+    });
+    host.innerHTML = `
+      <div class="mu-multitoolbar">
+        <span class="label">${sel.length} zones</span>
+        <span class="sub">${escHtml(labels.join(' + '))}</span>
+        <span class="grow"></span>
+        <button class="mu-np-btn play" id="mtbToggle">${playingAny?'⏸':'▶'}</button>
+        <button class="mu-np-btn" id="mtbSkip" title="Skip on leader">⏭</button>
+        <span class="vol-icon">🔈</span>
+        <input type="range" min="0" max="1" step="0.02" value="${avgVol}" id="mtbVol">
+        <button class="mu-mini-btn good" id="mtbGroup" title="Group all selected zones together">+ Group all</button>
+        <button class="mu-mini-btn danger" id="mtbUngroup" title="Break all current groups">◇ Ungroup</button>
+      </div>`;
+    host.querySelector('#mtbToggle').addEventListener('click', () => muMultiTransport(playingAny?'pause':'play'));
+    host.querySelector('#mtbSkip').addEventListener('click', () => muMultiTransport('skip'));
+    host.querySelector('#mtbVol').addEventListener('input', e => muMultiVol(parseFloat(e.target.value)));
+    host.querySelector('#mtbGroup').addEventListener('click', () => muGroupAllSelected());
+    host.querySelector('#mtbUngroup').addEventListener('click', () => muUngroupAll());
+  }
+
+  function muMultiTransport(action) {
+    const sel = Array.from(selectedZones);
+    sel.forEach(e => muTransport(e, action));
+  }
+
+  let _mtbVolTimer = null;
+  function muMultiVol(v) {
+    clearTimeout(_mtbVolTimer);
+    _mtbVolTimer = setTimeout(() => {
+      const sel = Array.from(selectedZones);
+      sel.forEach(e => muVol(e, v));
+    }, 120);
+  }
+
+  window.muGroupAllSelected = function() {
+    const sel = Array.from(selectedZones);
+    if (sel.length < 2) return;
+    muGroupZones(sel[0], sel.slice(1));
+  };
 
   window.muGroupZones = async function(coordinator, members) {
     try {
@@ -755,17 +948,29 @@
     if (!f) return '';
     const pct = f.last_n_pct_up;
     if (pct === null || pct === undefined) {
-      // No data yet — surface that gently.
-      return `<span class="mu-fitness" title="No thumbs yet">— %</span>`;
+      return `<span class="mu-fitness" title="No thumbs yet — Benson will learn as you 👍/👎 tracks">— %</span>`;
     }
     let cls = 'bad';
     if (pct >= 70) cls = 'good';
     else if (pct >= 40) cls = 'mid';
     const blocked = (f.top_blocked || []).slice(0,3);
     const tip = blocked.length
-      ? `Top blocked: ${blocked.join(', ')}`
-      : `${f.thumbs_up}▲ / ${f.thumbs_down}▼ across last ${f.total}`;
+      ? `Curating away: ${blocked.join(', ')}`
+      : `${f.thumbs_up}👍 / ${f.thumbs_down}👎 across last ${f.total} tracks`;
     return `<span class="mu-fitness ${cls}" title="${escHtml(tip)}">${pct}%</span>`;
+  }
+
+  // Tiny inline thumb counter for the bottom of the station card —
+  // makes the silent curation visible without requiring a hover.
+  function renderThumbsLine(f) {
+    if (!f) return '';
+    const up = f.thumbs_up || 0;
+    const down = f.thumbs_down || 0;
+    if (!up && !down) return '';
+    return `<span class="mu-station-thumbs"
+                  title="Benson uses these to pick next songs">
+              👍 ${up} · 👎 ${down}
+            </span>`;
   }
 
   function renderStation(s) {
@@ -789,6 +994,7 @@
           <button class="mu-station-play" onclick="event.stopPropagation();muPlayStation(${s.id})">
             ▶ Play on ${escHtml(activeLabel())}
           </button>
+          ${renderThumbsLine(stationFitness[s.id])}
           <button class="mu-station-del" onclick="event.stopPropagation();muDeleteStation(${s.id})" title="Delete">×</button>
         </div>
       </div>`;
