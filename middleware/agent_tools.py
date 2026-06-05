@@ -381,6 +381,98 @@ async def stop_music(room: str, action: str = "pause") -> dict:
 
 
 @_register(
+    "thumbs_song",
+    "Thumbs-up (1) or thumbs-down (-1) the currently playing track. "
+    "Thumbs-down also skips. Zone optional; defaults to whichever zone "
+    "is currently playing.",
+    {
+        "type": "object",
+        "properties": {
+            "thumb": {
+                "type": ["integer", "string"],
+                "description": "+1 thumbs-up, -1 thumbs-down (also skips the track), 0 to clear a prior verdict.",
+            },
+            "zone": {
+                "type": "string",
+                "description": (
+                    "Optional room or HA entity_id (kitchen / family_room / "
+                    "tv_room / master_bedroom / patio / ...). Defaults to "
+                    "whichever zone is currently playing."
+                ),
+            },
+        },
+        "required": ["thumb"],
+    },
+)
+async def thumbs_song(thumb: int, zone: str | None = None) -> dict:
+    # Import lazily to dodge the music_handler ↔ agent_tools cycle at
+    # module-import time. Both modules already live in the same package
+    # at runtime so this is free after the first call.
+    from music_handler import _ZONES, thumbs_record
+
+    resolved_room: str | None = None
+    entity: str | None = None
+
+    # If caller passed an explicit zone, accept it as either a room id
+    # (kitchen), an MASS_ZONES alias (master_bedroom → bathroom_2), or a
+    # raw HA media_player.* entity.
+    if zone:
+        if zone.startswith("media_player."):
+            entity = zone
+            for rid, info in _ZONES.items():
+                if info["entity"] == zone:
+                    resolved_room = rid
+                    break
+        else:
+            info = _ZONES.get(zone)
+            if info:
+                resolved_room = zone
+                entity = info["entity"]
+            else:
+                entity = _resolve_mass_zone(zone)
+                resolved_room = zone if entity else None
+
+    # No usable zone yet — scan _ZONES for one that's actively playing.
+    if not entity:
+        for room_id, info in _ZONES.items():
+            try:
+                s = await ha_get_state(info["entity"])
+            except Exception:
+                continue
+            if (s or {}).get("state") in ("playing", "buffering"):
+                resolved_room = room_id
+                entity = info["entity"]
+                break
+
+    # Still nothing playing — fall back to kitchen.
+    if not entity:
+        resolved_room = "kitchen"
+        entity = _ZONES["kitchen"]["entity"]
+
+    title = artist = album = content_id = None
+    try:
+        s = await ha_get_state(entity)
+        a = (s or {}).get("attributes", {}) or {}
+        title = a.get("media_title")
+        artist = a.get("media_artist")
+        album = a.get("media_album_name")
+        content_id = a.get("media_content_id")
+    except Exception as e:
+        logger.warning(f"thumbs_song: failed to fetch HA state for {entity}: {e}")
+
+    result = await thumbs_record(
+        thumb=int(thumb),
+        zone=entity,
+        title=title,
+        artist=artist,
+        album=album,
+        content_id=content_id,
+        source="voice",
+    )
+    return {**result, "resolved_zone": entity, "resolved_room": resolved_room}
+
+
+@_register(
     "set_volume",
     "Set the volume on any media_player (Sonos zone OR the kitchen "
     "ReSpeaker satellite). Pass an HA entity_id and a 0.0-1.0 level. "

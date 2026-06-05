@@ -946,35 +946,33 @@ async def stations_play(station_id: int, request: Request) -> dict:
 
 
 # ─── Thumbs (Pandora-style track feedback) ──────────────────────────────
-@router.post("/api/music/thumbs")
-async def thumbs_post(request: Request) -> dict:
-    """Body: {thumb: +1|-1|0, track_uri?, artist?, album?, title?,
-    station_id?, source?, zone?}. On thumb=-1 we also fire a
-    media_next_track on the zone so the bad track stops immediately."""
-    body = await request.json()
-    try:
-        thumb = int(body.get("thumb"))
-    except (TypeError, ValueError):
-        raise HTTPException(400, "thumb (+1, -1, 0) required")
+async def thumbs_record(
+    thumb: int,
+    zone: str | None,
+    title: str | None,
+    artist: str | None,
+    album: str | None,
+    content_id: str | None,
+    *,
+    station_id: int | None = None,
+    source: str = "manual",
+) -> dict:
+    """Upsert a Pandora-style verdict on the currently playing track and,
+    for thumb=-1, fire media_next_track on the zone so the bad track ends
+    immediately. Called both by POST /api/music/thumbs and by the
+    thumbs_song MCP tool — keep the body callable in-process so voice /
+    Signal don't have to self-loop through HTTP."""
     if thumb not in (-1, 0, 1):
         raise HTTPException(400, "thumb must be -1, 0, or 1")
-    track_uri = (body.get("track_uri") or body.get("media_uri") or "").strip() or None
-    artist = (body.get("artist") or "").strip() or None
-    album = (body.get("album") or "").strip() or None
-    title = (body.get("title") or "").strip() or None
-    station_id = body.get("station_id")
-    if station_id in ("", None):
-        station_id = None
-    else:
-        try:
-            station_id = int(station_id)
-        except (TypeError, ValueError):
-            raise HTTPException(400, "station_id must be int")
-    source = (body.get("source") or "manual").strip()
-    zone = (body.get("zone") or "").strip() or None
+    track_uri = (content_id or "").strip() or None
+    title = (title or "").strip() or None
+    artist = (artist or "").strip() or None
+    album = (album or "").strip() or None
+    zone = (zone or "").strip() or None
+    source = (source or "manual").strip() or "manual"
 
     if not track_uri and not (artist and title):
-        raise HTTPException(400, "track_uri OR (artist + title) required")
+        raise HTTPException(400, "content_id OR (artist + title) required")
 
     def _upsert() -> dict:
         with psycopg2.connect(**PG_DSN) as conn, conn.cursor(
@@ -1025,6 +1023,37 @@ async def thumbs_post(request: Request) -> dict:
     if ca is not None and not isinstance(ca, str):
         row["created_at"] = ca.isoformat(timespec="seconds")
     return {"ok": True, "thumb": row, "skipped": skipped}
+
+
+@router.post("/api/music/thumbs")
+async def thumbs_post(request: Request) -> dict:
+    """Body: {thumb: +1|-1|0, track_uri?, artist?, album?, title?,
+    station_id?, source?, zone?}. On thumb=-1 we also fire a
+    media_next_track on the zone so the bad track stops immediately.
+    Thin HTTP wrapper around thumbs_record()."""
+    body = await request.json()
+    try:
+        thumb = int(body.get("thumb"))
+    except (TypeError, ValueError):
+        raise HTTPException(400, "thumb (+1, -1, 0) required")
+    station_id = body.get("station_id")
+    if station_id in ("", None):
+        station_id = None
+    else:
+        try:
+            station_id = int(station_id)
+        except (TypeError, ValueError):
+            raise HTTPException(400, "station_id must be int")
+    return await thumbs_record(
+        thumb=thumb,
+        zone=body.get("zone"),
+        title=body.get("title"),
+        artist=body.get("artist"),
+        album=body.get("album"),
+        content_id=body.get("track_uri") or body.get("media_uri"),
+        station_id=station_id,
+        source=body.get("source") or "manual",
+    )
 
 
 @router.get("/api/music/thumbs/recent")
