@@ -4,9 +4,13 @@
 {% if person_filter %}
   <div class="mb-2"><a href="/chores" class="small text-warning text-decoration-none">← All chores</a></div>
 {% endif %}
-<div class="d-flex justify-content-between align-items-baseline mb-3">
+
+<div class="chores-header">
   <h2 class="mb-0">Chores{% if person_filter %} <span class="text-secondary fs-5">· {{ persons[0] }}</span>{% endif %}</h2>
-  <div class="text-secondary small">Person × day · click ○/✓ to toggle · hover to delete · "+ Add" for new</div>
+  <div class="view-toggle btn-group btn-group-sm" role="group" aria-label="View mode">
+    <button type="button" class="btn btn-outline-warning" data-view="daily">Daily</button>
+    <button type="button" class="btn btn-outline-warning" data-view="weekly">Weekly</button>
+  </div>
 </div>
 
 <div id="weeklyTally" class="card bg-dark border-secondary p-2 mb-3 small" style="display:none">
@@ -23,99 +27,8 @@
   <datalist id="templates-{{ p }}"></datalist>
 {% endfor %}
 
-<script>
-// Weekly tally banner.
-(async () => {
-  try {
-    const r = await fetch('/api/rewards/weekly');
-    if (!r.ok) return;
-    const j = await r.json();
-    if (!j.summary || !j.summary.length) return;
-    const parts = [];
-    for (const row of j.summary) {
-      const p = row.person;
-      if (p === 'Cole') {
-        const earned = parseFloat(row.earned_dollars || 0).toFixed(2);
-        const possible = parseFloat(row.possible_dollars || 0).toFixed(2);
-        parts.push(`<span><strong>Cole:</strong> $${earned} of $${possible} <span class="text-secondary">(${row.done_count}/${row.total_count} done)</span></span>`);
-      } else if (p === 'Zander') {
-        parts.push(`<span><strong>Zander:</strong> ${row.earned_points} of ${row.possible_points} pts <span class="text-secondary">(${row.done_count}/${row.total_count} done)</span></span>`);
-      }
-    }
-    if (parts.length) {
-      document.getElementById('tallyContent').innerHTML = parts.join(' &nbsp;·&nbsp; ');
-      document.getElementById('weeklyTally').style.display = 'block';
-    }
-  } catch (e) { /* silent */ }
-})();
-
-// Populate the chore-name autocomplete datalists from the historical
-// catalog. Each person gets their own list; typing in the add-form
-// matches against their own historical chores first.
-//
-// On select, the form's reward field is auto-filled with the
-// template's default value when one is set — saves re-entering $2 for
-// "walk bluey" every time.
-window._choreTemplates = {};
-(async () => {
-  try {
-    const r = await fetch('/api/chore-templates');
-    if (!r.ok) return;
-    const j = await r.json();
-    const byPerson = {};
-    for (const t of (j.templates || [])) {
-      (byPerson[t.person] = byPerson[t.person] || []).push(t);
-      window._choreTemplates[`${t.person.toLowerCase()}|${t.chore_name.toLowerCase()}`] = t;
-    }
-    for (const [person, list] of Object.entries(byPerson)) {
-      const dl = document.getElementById('templates-' + person);
-      if (!dl) continue;
-      // Sort by use_count DESC so popular ones suggest first.
-      list.sort((a, b) => (b.use_count || 0) - (a.use_count || 0));
-      dl.innerHTML = list.map(t => {
-        const dollars = parseFloat(t.default_dollars || 0);
-        const points = parseInt(t.default_points || 0, 10);
-        const reward = dollars > 0 ? `$${dollars.toFixed(2)}` :
-                       points > 0 ? `${points}pts` : '';
-        const used = (t.use_count || 0) > 0 ? ` · ${t.use_count}×` : '';
-        const label = reward ? `${reward}${used}` : `${used.replace(' · ','')}` || '';
-        return `<option value="${t.chore_name.replace(/"/g,'&quot;')}"${label ? ` label="${label}"` : ''}></option>`;
-      }).join('');
-    }
-  } catch (e) { /* silent */ }
-})();
-
-// When the chore-name input matches a template, auto-fill the reward
-// inputs with that template's defaults. Listens on the existing
-// add-form inputs.
-document.querySelectorAll('[data-add-input]').forEach(input => {
-  input.addEventListener('change', () => {
-    const f = input.closest('.chore-add-form');
-    if (!f) return;
-    const id = f.id || '';
-    // addform-Cole-2026-05-03 → person = "Cole"
-    const m = id.match(/^addform-([^-]+)-/);
-    if (!m) return;
-    const person = m[1];
-    const key = `${person.toLowerCase()}|${input.value.trim().toLowerCase()}`;
-    const t = window._choreTemplates[key];
-    if (!t) return;
-    const dollarsInput = f.querySelector('[data-add-dollars]');
-    const pointsInput = f.querySelector('[data-add-points]');
-    if (dollarsInput && !dollarsInput.value && t.default_dollars > 0) {
-      dollarsInput.value = parseFloat(t.default_dollars).toFixed(2);
-    }
-    if (pointsInput && !pointsInput.value && t.default_points > 0) {
-      pointsInput.value = parseInt(t.default_points, 10);
-    }
-  });
-});
-</script>
-
 <style>
-  .chore-grid th, .chore-grid td { vertical-align: top; padding: 0.5rem; }
-  .chore-grid th { background: #1a2128; }
-  .chore-cell { min-height: 80px; min-width: 140px; }
+  /* ── shared cell visuals ─────────────────────────────────────────── */
   .chore-item {
     display: flex; align-items: center; gap: 6px; padding: 4px 6px;
     margin-bottom: 4px; background: #1a2128; border-radius: 4px;
@@ -123,9 +36,9 @@ document.querySelectorAll('[data-add-input]').forEach(input => {
   }
   .chore-item:hover .chore-del { opacity: 1; }
   .chore-toggle {
-    flex-shrink: 0; width: 22px; height: 22px; border-radius: 50%;
+    flex-shrink: 0; width: 26px; height: 26px; border-radius: 50%;
     border: 1px solid #555; background: transparent; color: #ddd;
-    display: grid; place-items: center; cursor: pointer; font-size: 0.85rem;
+    display: grid; place-items: center; cursor: pointer; font-size: 0.9rem;
   }
   .chore-toggle.done { background: #198754; color: #fff; border-color: #198754; }
   .chore-name { flex-grow: 1; font-size: 0.9rem; word-break: break-word; }
@@ -136,15 +49,134 @@ document.querySelectorAll('[data-add-input]').forEach(input => {
     padding: 0 4px; cursor: pointer;
   }
   .chore-add {
-    width: 100%; padding: 3px; background: transparent;
+    width: 100%; padding: 4px; background: transparent;
     border: 1px dashed #444; border-radius: 4px; color: #888;
     cursor: pointer; font-size: 0.85rem;
   }
   .chore-add:hover { border-color: #f39c12; color: #f39c12; }
   .chore-add-form { background: #2a3340; padding: 6px; border-radius: 4px; margin-top: 4px; }
+
+  /* ── header / toggle ─────────────────────────────────────────────── */
+  .chores-header {
+    display: flex; flex-wrap: wrap; align-items: center; gap: .75rem;
+    justify-content: space-between; margin-bottom: 1rem;
+  }
+  .view-toggle .btn.active { background: #f39c12; color: #1a2128; border-color: #f39c12; }
+
+  /* ── DAILY view (default) ────────────────────────────────────────── */
+  .daily-view { display: grid; grid-template-columns: 1fr; gap: 0.75rem; }
+  @media (min-width: 700px)  { .daily-view { grid-template-columns: repeat(2, 1fr); } }
+  @media (min-width: 1100px) { .daily-view { grid-template-columns: repeat(3, 1fr); } }
+  .daily-card {
+    background: #1a2128; border: 1px solid #2d3a47; border-radius: 8px;
+    padding: 0.75rem;
+  }
+  .daily-card h3 {
+    font-size: 1rem; margin: 0 0 .5rem; padding-bottom: .35rem;
+    border-bottom: 1px solid #2d3a47; color: #f39c12;
+    display: flex; justify-content: space-between; align-items: baseline;
+  }
+  .daily-card h3 .progress-pill {
+    font-size: .75rem; color: #aaa; font-weight: normal;
+  }
+  .daily-card .chore-item { margin-bottom: 6px; }
+  .daily-card .chore-empty { color: #666; font-style: italic; font-size: .85rem; padding: 4px 0; }
+
+  /* ── WEEKLY view (grid) ──────────────────────────────────────────── */
+  .chore-grid th, .chore-grid td { vertical-align: top; padding: 0.5rem; }
+  .chore-grid th { background: #1a2128; }
+  .chore-cell { min-height: 80px; min-width: 140px; }
+  .weekly-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  @media (max-width: 700px) {
+    .chore-grid th, .chore-grid td { padding: 0.35rem; font-size: 0.85rem; }
+    .chore-cell { min-width: 120px; }
+  }
+
+  /* the two views toggle via [hidden] */
+  [hidden] { display: none !important; }
 </style>
 
-<div class="table-responsive">
+<!-- ────────── DAILY VIEW ────────── -->
+<div id="dailyView" class="daily-view">
+  {% set today_str = days[0].isoformat() %}
+  <div class="text-secondary small mb-1" style="grid-column: 1 / -1;">
+    Today · {{ days[0].strftime('%A, %B %d') }}
+  </div>
+  {% for p in persons %}
+    {% set items = chores_map[p][today_str] %}
+    <div class="daily-card">
+      <h3>
+        <span>{{ p }}</span>
+        <span class="progress-pill" data-person-progress="{{ p }}">
+          {% set done = items | selectattr('done') | list | length %}
+          {{ done }}/{{ items|length }} done
+        </span>
+      </h3>
+      <div class="daily-list">
+        {% for c in items %}
+          <div class="chore-item" data-id="{{ c.id }}">
+            <button class="chore-toggle{% if c.done %} done{% endif %}"
+                    onclick="toggleChore({{ c.id }}, this)">{% if c.done %}✓{% else %}○{% endif %}</button>
+            <span class="chore-name{% if c.done %} done{% endif %}"
+                  ondblclick="editChore({{ c.id }}, this)">{{ c.chore_name }}</span>
+            {% if c.recurring %}
+              <span class="badge bg-info text-dark" title="Recurring: {{ c.recurring }} (double-click to edit)"
+                    ondblclick="editRecurring({{ c.id }}, this)" style="cursor:pointer;font-size:.65rem">↻ {{ c.recurring }}</span>
+            {% endif %}
+            {% if c.dollars and c.dollars|float > 0 %}
+              <span class="badge bg-success" title="Cole's reward (double-click to edit)"
+                    ondblclick="editReward({{ c.id }}, 'dollars', {{ c.dollars }}, this)"
+                    style="cursor:pointer;font-size:.65rem">${{ '%.2f'|format(c.dollars|float) }}</span>
+            {% endif %}
+            {% if c.points and c.points|int > 0 %}
+              <span class="badge bg-primary" title="Zander's reward (double-click to edit)"
+                    ondblclick="editReward({{ c.id }}, 'points', {{ c.points }}, this)"
+                    style="cursor:pointer;font-size:.65rem">{{ c.points }}pts</span>
+            {% endif %}
+            <button class="chore-del" onclick="deleteChore({{ c.id }}, this)" title="Delete">×</button>
+          </div>
+        {% else %}
+          <div class="chore-empty">Nothing assigned today.</div>
+        {% endfor %}
+      </div>
+      <button class="chore-add" onclick="showAdd('{{ p }}','{{ today_str }}', this)">+ Add</button>
+      <div class="chore-add-form" id="addform-daily-{{ p }}-{{ today_str }}" style="display:none">
+        <input type="text" class="form-control form-control-sm bg-dark text-light border-secondary mb-1"
+               placeholder="Chore name (or pick template ↓)" list="templates-{{ p }}" data-add-input>
+        <select class="form-select form-select-sm bg-dark text-light border-secondary mb-1" data-add-recurring>
+          <option value="">One-off</option>
+          <option value="daily">Daily</option>
+          <option value="weekdays">Weekdays</option>
+          <option value="weekends">Weekends</option>
+          <option value="weekly">Weekly</option>
+        </select>
+        <div class="d-flex gap-1 mb-1">
+          {% if p == 'Cole' %}
+            <input type="number" step="0.25" min="0" class="form-control form-control-sm bg-dark text-light border-secondary"
+                   placeholder="$ reward" data-add-dollars style="font-size:.85rem">
+          {% elif p == 'Zander' %}
+            <input type="number" step="1" min="0" class="form-control form-control-sm bg-dark text-light border-secondary"
+                   placeholder="points" data-add-points style="font-size:.85rem">
+          {% else %}
+            <input type="number" step="0.25" min="0" class="form-control form-control-sm bg-dark text-light border-secondary"
+                   placeholder="$ reward" data-add-dollars style="font-size:.85rem">
+            <input type="number" step="1" min="0" class="form-control form-control-sm bg-dark text-light border-secondary"
+                   placeholder="points" data-add-points style="font-size:.85rem">
+          {% endif %}
+        </div>
+        <div class="d-flex gap-1">
+          <button class="btn btn-sm btn-warning flex-fill"
+                  onclick="addChore('{{ p }}','{{ today_str }}', this)">Add</button>
+          <button class="btn btn-sm btn-outline-secondary"
+                  onclick="hideAddDaily('{{ p }}','{{ today_str }}')">×</button>
+        </div>
+      </div>
+    </div>
+  {% endfor %}
+</div>
+
+<!-- ────────── WEEKLY VIEW ────────── -->
+<div id="weeklyView" class="weekly-scroll" hidden>
   <table class="table table-dark chore-grid">
     <thead>
       <tr>
@@ -225,6 +257,104 @@ document.querySelectorAll('[data-add-input]').forEach(input => {
 </div>
 
 <script>
+// ── view toggle (daily/weekly) ─────────────────────────────────────
+(function () {
+  const KEY = 'choresView';
+  const buttons = document.querySelectorAll('.view-toggle [data-view]');
+  const dailyEl = document.getElementById('dailyView');
+  const weeklyEl = document.getElementById('weeklyView');
+  function apply(mode) {
+    const m = (mode === 'weekly') ? 'weekly' : 'daily';
+    dailyEl.hidden = (m !== 'daily');
+    weeklyEl.hidden = (m !== 'weekly');
+    buttons.forEach(b => b.classList.toggle('active', b.dataset.view === m));
+    try { localStorage.setItem(KEY, m); } catch (e) {}
+  }
+  buttons.forEach(b => b.addEventListener('click', () => apply(b.dataset.view)));
+  let saved = 'daily';
+  try { saved = localStorage.getItem(KEY) || 'daily'; } catch (e) {}
+  apply(saved);
+})();
+
+// ── weekly tally banner ────────────────────────────────────────────
+(async () => {
+  try {
+    const r = await fetch('/api/rewards/weekly');
+    if (!r.ok) return;
+    const j = await r.json();
+    if (!j.summary || !j.summary.length) return;
+    const parts = [];
+    for (const row of j.summary) {
+      const p = row.person;
+      if (p === 'Cole') {
+        const earned = parseFloat(row.earned_dollars || 0).toFixed(2);
+        const possible = parseFloat(row.possible_dollars || 0).toFixed(2);
+        parts.push(`<span><strong>Cole:</strong> $${earned} of $${possible} <span class="text-secondary">(${row.done_count}/${row.total_count} done)</span></span>`);
+      } else if (p === 'Zander') {
+        parts.push(`<span><strong>Zander:</strong> ${row.earned_points} of ${row.possible_points} pts <span class="text-secondary">(${row.done_count}/${row.total_count} done)</span></span>`);
+      }
+    }
+    if (parts.length) {
+      document.getElementById('tallyContent').innerHTML = parts.join(' &nbsp;·&nbsp; ');
+      document.getElementById('weeklyTally').style.display = 'block';
+    }
+  } catch (e) { /* silent */ }
+})();
+
+// ── autocomplete template seeding ──────────────────────────────────
+window._choreTemplates = {};
+(async () => {
+  try {
+    const r = await fetch('/api/chore-templates');
+    if (!r.ok) return;
+    const j = await r.json();
+    const byPerson = {};
+    for (const t of (j.templates || [])) {
+      (byPerson[t.person] = byPerson[t.person] || []).push(t);
+      window._choreTemplates[`${t.person.toLowerCase()}|${t.chore_name.toLowerCase()}`] = t;
+    }
+    for (const [person, list] of Object.entries(byPerson)) {
+      const dl = document.getElementById('templates-' + person);
+      if (!dl) continue;
+      list.sort((a, b) => (b.use_count || 0) - (a.use_count || 0));
+      dl.innerHTML = list.map(t => {
+        const dollars = parseFloat(t.default_dollars || 0);
+        const points = parseInt(t.default_points || 0, 10);
+        const reward = dollars > 0 ? `$${dollars.toFixed(2)}` :
+                       points > 0 ? `${points}pts` : '';
+        const used = (t.use_count || 0) > 0 ? ` · ${t.use_count}×` : '';
+        const label = reward ? `${reward}${used}` : `${used.replace(' · ','')}` || '';
+        return `<option value="${t.chore_name.replace(/"/g,'&quot;')}"${label ? ` label="${label}"` : ''}></option>`;
+      }).join('');
+    }
+  } catch (e) { /* silent */ }
+})();
+
+document.querySelectorAll('[data-add-input]').forEach(input => {
+  input.addEventListener('change', () => {
+    const f = input.closest('.chore-add-form');
+    if (!f) return;
+    const id = f.id || '';
+    // addform-Cole-2026-05-03 OR addform-daily-Cole-2026-05-03
+    const m = id.match(/^addform(?:-daily)?-([^-]+)-/);
+    if (!m) return;
+    const person = m[1];
+    const key = `${person.toLowerCase()}|${input.value.trim().toLowerCase()}`;
+    const t = window._choreTemplates[key];
+    if (!t) return;
+    const dollarsInput = f.querySelector('[data-add-dollars]');
+    const pointsInput = f.querySelector('[data-add-points]');
+    if (dollarsInput && !dollarsInput.value && t.default_dollars > 0) {
+      dollarsInput.value = parseFloat(t.default_dollars).toFixed(2);
+    }
+    if (pointsInput && !pointsInput.value && t.default_points > 0) {
+      pointsInput.value = parseInt(t.default_points, 10);
+    }
+  });
+});
+</script>
+
+<script>
 async function toggleChore(id, btn) {
   const r = await fetch('/api/chores/' + id + '/toggle', {method: 'POST'});
   if (!r.ok) { alert('toggle failed'); return; }
@@ -255,18 +385,38 @@ async function editChore(id, span) {
   span.textContent = next.trim();
 }
 
+// Find the appropriate add-form for a person+date. Daily view uses a
+// "daily-" prefixed id; weekly view uses the un-prefixed id.
+function _findAddForm(person, dstr) {
+  return document.getElementById('addform-daily-' + person + '-' + dstr)
+      || document.getElementById('addform-' + person + '-' + dstr);
+}
+
 function showAdd(person, dstr, btn) {
-  const f = document.getElementById('addform-' + person + '-' + dstr);
+  const f = _findAddForm(person, dstr);
+  if (!f) return;
   f.style.display = 'block';
   btn.style.display = 'none';
-  f.querySelector('[data-add-input]').focus();
+  const input = f.querySelector('[data-add-input]');
+  if (input) input.focus();
 }
 
 function hideAdd(person, dstr) {
   const f = document.getElementById('addform-' + person + '-' + dstr);
+  if (!f) return;
   f.style.display = 'none';
-  f.previousElementSibling.style.display = 'block';
-  f.querySelector('[data-add-input]').value = '';
+  if (f.previousElementSibling) f.previousElementSibling.style.display = 'block';
+  const input = f.querySelector('[data-add-input]');
+  if (input) input.value = '';
+}
+
+function hideAddDaily(person, dstr) {
+  const f = document.getElementById('addform-daily-' + person + '-' + dstr);
+  if (!f) return;
+  f.style.display = 'none';
+  if (f.previousElementSibling) f.previousElementSibling.style.display = 'block';
+  const input = f.querySelector('[data-add-input]');
+  if (input) input.value = '';
 }
 
 async function addChore(person, dstr, btn) {
@@ -325,7 +475,6 @@ async function editRecurring(id, badge) {
   location.reload();
 }
 
-// Submit form on Enter
 document.querySelectorAll('[data-add-input]').forEach(inp => {
   inp.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') {
@@ -335,8 +484,10 @@ document.querySelectorAll('[data-add-input]').forEach(inp => {
     }
     if (e.key === 'Escape') {
       const f = inp.closest('.chore-add-form');
-      const matches = f.id.match(/^addform-(.+?)-(.+)$/);
-      if (matches) hideAdd(matches[1], matches[2]);
+      const m = f.id.match(/^addform-(?:daily-)?(.+?)-(\d{4}-\d{2}-\d{2})$/);
+      if (!m) return;
+      if (f.id.startsWith('addform-daily-')) hideAddDaily(m[1], m[2]);
+      else hideAdd(m[1], m[2]);
     }
   });
 });
