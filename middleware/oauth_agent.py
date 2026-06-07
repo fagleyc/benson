@@ -499,6 +499,17 @@ async def run_agent(
             # Mark the speaker as having hit a failure — the next turn
             # will route up one tier (failure-recency bump in select()).
             _record_tool_failure(speaker)
+            # Partial recovery (2026-06-07): the bundled CLI exits 1 silently
+            # after a successful tool dispatch fairly often. If we already
+            # accumulated text from the model before the crash, return that
+            # to the user instead of the canned "OAuth path failed" message
+            # — which drops real work on the floor. The failure is still
+            # recorded above (failure counter + warning log) so we don't
+            # hide the bug from observability.
+            partial = "\n".join(p for p in text_parts if p).strip()
+            if partial:
+                meta["partial_recovery"] = True
+                return partial, "oauth_partial", meta
         finally:
             # Rotate SDK debug logs — keep the most recent 50, delete older.
             try:
