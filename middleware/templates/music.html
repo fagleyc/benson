@@ -347,6 +347,111 @@
     background: linear-gradient(135deg,#2a3340,#1f2730);
     background-size: cover; background-position: center; margin: .25rem auto;
   }
+
+  /* ─── Single consolidated Now-Playing control bar ────────────────────
+     One large control surface for the current speaker selection. Replaces
+     the per-zone transport + thumbs that used to repeat on every chip. */
+  .mu-npbar {
+    display: flex; gap: 1rem; align-items: center;
+    background: linear-gradient(135deg,#16212c,#10171e);
+    border: 1px solid #2d3a47; border-radius: 12px;
+    padding: .85rem 1rem; margin-bottom: .9rem;
+    position: sticky; top: 4px; z-index: 30;
+    box-shadow: 0 4px 16px rgba(0,0,0,.4);
+  }
+  .mu-npbar.playing { border-color: #7fdb9b; }
+  .mu-npbar.empty   { opacity: .85; }
+  .mu-npbar-art {
+    width: 74px; height: 74px; border-radius: 8px; flex: 0 0 74px;
+    background: linear-gradient(135deg,#2a3340,#1f2730);
+    background-size: cover; background-position: center;
+    display: flex; align-items: center; justify-content: center;
+    color: #6c7a8a; font-size: 1.9rem;
+  }
+  .mu-npbar-meta { flex: 1 1 auto; min-width: 0; }
+  .mu-npbar-target {
+    font-size: .72rem; letter-spacing: .06em; text-transform: uppercase;
+    color: #f39c12; font-weight: 700;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .mu-npbar-title {
+    color: #e8ecef; font-weight: 700; font-size: 1.12rem; line-height: 1.2;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .mu-npbar-sub {
+    color: #aab3bf; font-size: .85rem;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .mu-npbar-volrow { display: flex; gap: .5rem; align-items: center; margin-top: .35rem; max-width: 320px; }
+  .mu-npbar-volrow .vol-icon { font-size: .8rem; color: #889; }
+  .mu-npbar-vol { flex: 1 1 auto; height: 5px; }
+  .mu-npbar-controls { display: flex; gap: .4rem; align-items: center; flex: 0 0 auto; }
+
+  /* Big touch targets — sized for fingers on the kitchen iPad. */
+  .mu-bigbtn {
+    background: #2a3340; color: #e8ecef; border: 1px solid #3a4654;
+    border-radius: 10px; min-width: 54px; height: 54px;
+    font-size: 1.35rem; cursor: pointer; line-height: 1;
+    display: flex; align-items: center; justify-content: center;
+    transition: transform .07s ease, background .12s;
+    -webkit-tap-highlight-color: transparent; touch-action: manipulation;
+  }
+  .mu-bigbtn:hover  { background: #34414f; }
+  .mu-bigbtn:active { transform: scale(.9); }
+  .mu-bigbtn.play {
+    background: #f39c12; color: #1a1a1a; border-color: #f39c12;
+    min-width: 66px; font-size: 1.6rem; font-weight: 700;
+  }
+  .mu-bigbtn.thumb.up.active   { background: #f39c12; color: #1a1a1a; border-color: #f39c12; }
+  .mu-bigbtn.thumb.down.active { background: #c0392b; color: #fff;    border-color: #c0392b; }
+  /* Pulse ring confirms a thumb registered without waiting for the server. */
+  .mu-bigbtn.pulse   { animation: muPulseUp .5s ease; }
+  .mu-bigbtn.down.pulse { animation: muPulseDn .5s ease; }
+  @keyframes muPulseUp {
+    0%   { transform: scale(1);   box-shadow: 0 0 0 0 rgba(243,156,18,.6); }
+    45%  { transform: scale(1.2); }
+    100% { transform: scale(1);   box-shadow: 0 0 0 16px rgba(243,156,18,0); }
+  }
+  @keyframes muPulseDn {
+    0%   { transform: scale(1);   box-shadow: 0 0 0 0 rgba(192,57,43,.6); }
+    45%  { transform: scale(1.2); }
+    100% { transform: scale(1);   box-shadow: 0 0 0 16px rgba(192,57,43,0); }
+  }
+  @media (max-width: 620px) {
+    .mu-npbar { flex-wrap: wrap; }
+    .mu-npbar-controls { width: 100%; justify-content: space-between; }
+    .mu-bigbtn { flex: 1 1 auto; }
+  }
+
+  /* ─── Toast (touch feedback for actions) ─────────────────────────────── */
+  .mu-toast-host {
+    position: fixed; left: 50%; bottom: 26px; transform: translateX(-50%);
+    z-index: 2000; display: flex; flex-direction: column; gap: .5rem;
+    align-items: center; pointer-events: none;
+  }
+  .mu-toast {
+    background: #1a2128; border: 1px solid #3a4654; border-left: 4px solid #f39c12;
+    color: #e8ecef; padding: .65rem 1.05rem; border-radius: 8px;
+    font-size: .92rem; box-shadow: 0 8px 24px rgba(0,0,0,.5); max-width: 84vw;
+    animation: muToastIn .18s ease;
+  }
+  .mu-toast.good { border-left-color: #7fdb9b; }
+  .mu-toast.bad  { border-left-color: #c0392b; }
+  .mu-toast.out  { opacity: 0; transition: opacity .25s ease; }
+  @keyframes muToastIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+
+  /* Station card tap / starting feedback */
+  .mu-station { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
+  .mu-station:active { transform: scale(.98); }
+  .mu-station.starting { outline: 2px solid #f39c12; outline-offset: 1px; }
+  .mu-station.starting::after {
+    content: ''; position: absolute; inset: 0; border-radius: 10px;
+    background: rgba(243,156,18,.10); pointer-events: none;
+    animation: muStartPulse 1s ease-in-out infinite;
+  }
+  @keyframes muStartPulse { 0%,100% { opacity: .25; } 50% { opacity: .7; } }
+  .mu-station-play.starting { background: #f39c12; color: #1a1a1a; border-color: #f39c12; }
+  .mu-station-play:active { transform: scale(.97); }
 </style>
 
 <!-- ─── Header ────────────────────────────────────────────────────────── -->
@@ -359,6 +464,9 @@
 <div class="text-secondary small mb-3">
   Apple Music via Music Assistant · homebrew Pandora · per-zone control
 </div>
+
+<!-- Toast host (touch-action feedback) -->
+<div class="mu-toast-host" id="muToastHost"></div>
 
 <!-- ─── Quick search ─────────────────────────────────────────────────── -->
 <div class="mu-section">
@@ -379,7 +487,8 @@
       <span class="mu-section-sub" id="muNpSummary">—</span>
     </div>
   </div>
-  <div id="muMultiToolbar"></div>
+  <!-- One consolidated control bar for the current selection -->
+  <div id="muNpBar"></div>
   <div class="mu-zonestrip" id="muZoneStrip">
     <div class="mu-empty" style="grid-column:1/-1">Loading zones…</div>
   </div>
@@ -519,6 +628,21 @@
   // metadata (artist/title/uri) when the user mashes a thumb button.
   const zoneNowPlaying = {};
 
+  // Remembered thumb per zone: {uri, value}. Lets the bar keep the 👍/👎
+  // highlight lit across polls while the same track plays.
+  const thumbedTracks = {};
+
+  // ─── Toast — lightweight, non-blocking touch feedback ───────────────
+  function muToast(msg, kind) {
+    const host = document.getElementById('muToastHost');
+    if (!host) return;
+    const t = document.createElement('div');
+    t.className = 'mu-toast' + (kind ? ' ' + kind : '');
+    t.textContent = msg;
+    host.appendChild(t);
+    setTimeout(() => { t.classList.add('out'); setTimeout(() => t.remove(), 280); }, 2200);
+  }
+
   // Per-zone expanded state (click a chip's title to expand).
   const expandedZones = new Set();
 
@@ -551,10 +675,17 @@
       const r = await fetch('/api/music/now-playing');
       const j = await r.json();
       const zones = j.zones || [];
-      // Index now-playing snapshot by entity for thumb metadata lookup.
-      zones.forEach(z => { zoneNowPlaying[z.entity_id] = z; });
+      // Index now-playing snapshot by entity for thumb metadata lookup, and
+      // re-apply a remembered thumb if the same track is still playing.
+      zones.forEach(z => {
+        zoneNowPlaying[z.entity_id] = z;
+        const tt = thumbedTracks[z.entity_id];
+        if (tt && tt.uri && tt.uri === z.media_content_id) z._thumb = tt.value;
+        else if (tt) delete thumbedTracks[z.entity_id];
+      });
       const playing = zones.filter(z => z.playing);
       renderZoneStrip(zones);
+      updateStationPlayLabels();
       const playingCnt = playing.length;
       const selCnt = selectedZones.size;
       document.getElementById('muNpSummary').textContent =
@@ -573,12 +704,12 @@
     const strip = document.getElementById('muZoneStrip');
     if (!zones.length) {
       strip.innerHTML = '<div class="mu-empty" style="grid-column:1/-1">No zones.</div>';
-      renderMultiToolbar();
+      renderNowPlayingBar();
       return;
     }
     strip.innerHTML = zones.map(z => renderZoneChip(z, zones)).join('');
     wireZoneChipEvents();
-    renderMultiToolbar();
+    renderNowPlayingBar();
   }
 
   function groupCoordinator(entity, zones) {
@@ -612,9 +743,6 @@
     const title = z.media_title || (playing ? '—' : 'idle');
     const sub = [z.media_artist, z.media_album_name].filter(Boolean).join(' · ') || '';
     const vol = (typeof z.volume === 'number') ? Math.round(z.volume * 100) : 0;
-    const playBtn = playing ? '⏸' : '▶';
-    const upActive = !!(z._thumb === 1);
-    const dnActive = !!(z._thumb === -1);
 
     // Group/Leave button logic:
     //   - In a group → "Leave group" (ungroups just this zone).
@@ -651,16 +779,6 @@
         <div class="mu-zonechip-title">${escHtml(title)}</div>
         <div class="mu-zonechip-sub">${escHtml(sub) || '&nbsp;'}</div>
 
-        <div class="mu-zonechip-transport">
-          <button class="mu-np-btn" data-act="prev"  title="Previous">⏮</button>
-          <button class="mu-np-btn play" data-act="toggle">${playBtn}</button>
-          <button class="mu-np-btn" data-act="skip"  title="Next">⏭</button>
-          <div class="mu-zonechip-thumbs">
-            <button class="mu-thumb-btn up   ${upActive?'active':''}" data-act="thumb-up"   title="Thumbs up — remember this track">👍</button>
-            <button class="mu-thumb-btn down ${dnActive?'active':''}" data-act="thumb-down" title="Thumbs down — skip + never play again">👎</button>
-          </div>
-        </div>
-
         <div class="mu-zonechip-volrow">
           <span class="vol-icon">🔈</span>
           <input type="range" class="mu-zonechip-vol" min="0" max="1" step="0.02"
@@ -688,18 +806,15 @@
       // Stops the click semantics overload (no more shift-click/dbl-click).
       chip.addEventListener('click', (e) => {
         const trigger = e.target.closest('[data-act]');
-        if (!trigger) return;
+        // Tapping anywhere on the chip body (not a button/slider) selects it —
+        // the chip's primary job now that transport lives on the bar.
+        if (!trigger) {
+          if (!e.target.closest('input')) muToggleSelect(ent);
+          return;
+        }
         const act = trigger.dataset.act;
         e.stopPropagation();
         switch (act) {
-          case 'prev':       return muTransport(ent, 'prev');
-          case 'toggle': {
-            const z = _zonesSnapshot.find(x => x.entity_id === ent);
-            return muTransport(ent, z && z.playing ? 'pause' : 'play');
-          }
-          case 'skip':       return muTransport(ent, 'skip');
-          case 'thumb-up':   return muThumb(ent, 1);
-          case 'thumb-down': return muThumb(ent, -1);
           case 'select':     return muToggleSelect(ent);
           case 'join':       return muJoinSelected(ent);
           case 'leave':      return muLeaveGroup(ent);
@@ -782,43 +897,102 @@
   };
 
   // ─── Sticky multi-zone toolbar ──────────────────────────────────────
-  function renderMultiToolbar() {
-    const host = document.getElementById('muMultiToolbar');
+  // The single now-playing control bar — transport + thumbs + master volume
+  // for whatever zone(s) are selected. Coordinator (first selected) drives
+  // the metadata shown and the thumb target.
+  function renderNowPlayingBar() {
+    const host = document.getElementById('muNpBar');
     if (!host) return;
     const sel = Array.from(selectedZones);
-    if (sel.length < 2) { host.innerHTML = ''; return; }
-    const playingAny = sel.some(e => {
-      const z = _zonesSnapshot.find(x => x.entity_id === e);
-      return z && z.playing;
-    });
-    // Average volume across selection for the master slider.
+    if (!sel.length) {
+      host.innerHTML = `
+        <div class="mu-npbar empty">
+          <div class="mu-npbar-art">♪</div>
+          <div class="mu-npbar-meta">
+            <div class="mu-npbar-target">No zone selected</div>
+            <div class="mu-npbar-title">Tap a speaker below</div>
+            <div class="mu-npbar-sub">to control playback from here</div>
+          </div>
+        </div>`;
+      return;
+    }
+
+    const coord = sel[0];
+    const z = _zonesSnapshot.find(x => x.entity_id === coord) || {};
+    const playing = !!z.playing;
+    const multi = sel.length > 1;
+    const title = z.media_title || (playing ? '—' : 'Nothing playing');
+    const sub = [z.media_artist, z.media_album_name].filter(Boolean).join(' · ') || ' ';
+    const art = z.entity_picture;
+    const artStyle = art ? `background-image:url('${escHtml(art)}')` : '';
+    const artPh = art ? '' : '♪';
+    const playBtn = playing ? '⏸' : '▶';
+    const upActive = z._thumb === 1 ? 'active' : '';
+    const dnActive = z._thumb === -1 ? 'active' : '';
+    const target = multi
+      ? `${sel.length} zones · ${escHtml(activeLabel())}`
+      : escHtml(activeLabel());
+
+    // Master volume = average across the selection.
     const vols = sel.map(e => {
-      const z = _zonesSnapshot.find(x => x.entity_id === e);
-      return (z && typeof z.volume === 'number') ? z.volume : null;
+      const s = _zonesSnapshot.find(x => x.entity_id === e);
+      return (s && typeof s.volume === 'number') ? s.volume : null;
     }).filter(v => v !== null);
     const avgVol = vols.length ? vols.reduce((a,b)=>a+b,0)/vols.length : 0.3;
-    const labels = sel.map(e => {
-      const z = _zonesSnapshot.find(x => x.entity_id === e);
-      return z ? z.label : e;
-    });
+
+    // Group/ungroup controls only matter with a multi-zone selection.
+    const groupCtl = multi ? `
+        <button class="mu-mini-btn good"   id="npbGroup"   title="Group all selected zones together">+ Group all</button>
+        <button class="mu-mini-btn danger" id="npbUngroup" title="Break all current groups">◇ Ungroup</button>` : '';
+
     host.innerHTML = `
-      <div class="mu-multitoolbar">
-        <span class="label">${sel.length} zones</span>
-        <span class="sub">${escHtml(labels.join(' + '))}</span>
-        <span class="grow"></span>
-        <button class="mu-np-btn play" id="mtbToggle">${playingAny?'⏸':'▶'}</button>
-        <button class="mu-np-btn" id="mtbSkip" title="Skip on leader">⏭</button>
-        <span class="vol-icon">🔈</span>
-        <input type="range" min="0" max="1" step="0.02" value="${avgVol}" id="mtbVol">
-        <button class="mu-mini-btn good" id="mtbGroup" title="Group all selected zones together">+ Group all</button>
-        <button class="mu-mini-btn danger" id="mtbUngroup" title="Break all current groups">◇ Ungroup</button>
+      <div class="mu-npbar ${playing?'playing':''}">
+        <div class="mu-npbar-art" style="${artStyle}">${artPh}</div>
+        <div class="mu-npbar-meta">
+          <div class="mu-npbar-target">${target}</div>
+          <div class="mu-npbar-title">${escHtml(title)}</div>
+          <div class="mu-npbar-sub">${escHtml(sub)}</div>
+          <div class="mu-npbar-volrow">
+            <span class="vol-icon">🔈</span>
+            <input type="range" class="mu-npbar-vol" min="0" max="1" step="0.02" value="${avgVol}" id="npbVol">
+          </div>
+        </div>
+        <div class="mu-npbar-controls">
+          <button class="mu-bigbtn" id="npbPrev" title="Previous">⏮</button>
+          <button class="mu-bigbtn play" id="npbToggle" title="${playing?'Pause':'Play'}">${playBtn}</button>
+          <button class="mu-bigbtn" id="npbSkip" title="Next">⏭</button>
+          <button class="mu-bigbtn thumb up ${upActive}"   id="npbUp"   title="Thumbs up — remember this track">👍</button>
+          <button class="mu-bigbtn thumb down ${dnActive}" id="npbDown" title="Thumbs down — skip + never play again">👎</button>
+          ${groupCtl}
+        </div>
       </div>`;
-    host.querySelector('#mtbToggle').addEventListener('click', () => muMultiTransport(playingAny?'pause':'play'));
-    host.querySelector('#mtbSkip').addEventListener('click', () => muMultiTransport('skip'));
-    host.querySelector('#mtbVol').addEventListener('input', e => muMultiVol(parseFloat(e.target.value)));
-    host.querySelector('#mtbGroup').addEventListener('click', () => muGroupAllSelected());
-    host.querySelector('#mtbUngroup').addEventListener('click', () => muUngroupAll());
+
+    host.querySelector('#npbPrev').addEventListener('click', () => muMultiTransport('prev'));
+    host.querySelector('#npbToggle').addEventListener('click', () => muMultiTransport(playing?'pause':'play'));
+    host.querySelector('#npbSkip').addEventListener('click', () => muMultiTransport('skip'));
+    host.querySelector('#npbUp').addEventListener('click', (e) => muBarThumb(1, e.currentTarget));
+    host.querySelector('#npbDown').addEventListener('click', (e) => muBarThumb(-1, e.currentTarget));
+    const v = host.querySelector('#npbVol');
+    if (v) v.addEventListener('input', () => muMultiVol(parseFloat(v.value)));
+    if (multi) {
+      host.querySelector('#npbGroup').addEventListener('click', () => muGroupAllSelected());
+      host.querySelector('#npbUngroup').addEventListener('click', () => muUngroupAll());
+    }
   }
+
+  // Thumb from the big bar: optimistic visual confirmation, then persist.
+  window.muBarThumb = function(value, btn) {
+    const host = document.getElementById('muNpBar');
+    const up = host && host.querySelector('#npbUp');
+    const dn = host && host.querySelector('#npbDown');
+    if (up && dn) {
+      up.classList.toggle('active', value === 1);
+      dn.classList.toggle('active', value === -1);
+      // Restart the pulse animation even on repeated taps.
+      btn.classList.remove('pulse'); void btn.offsetWidth; btn.classList.add('pulse');
+    }
+    muThumb(activeEntity(), value);
+  };
 
   function muMultiTransport(action) {
     const sel = Array.from(selectedZones);
@@ -872,7 +1046,7 @@
       source: 'manual',
     };
     if (!body.artist && !body.title && !body.track_uri) {
-      alert('Nothing playing to thumb on ' + entity);
+      muToast('Nothing playing to thumb', 'bad');
       return;
     }
     try {
@@ -880,13 +1054,19 @@
         method: 'POST', headers: {'Content-Type':'application/json'},
         body: JSON.stringify(body),
       });
-      if (!r.ok) { alert('Thumb failed: ' + await r.text()); return; }
+      if (!r.ok) { muToast('Thumb failed: ' + await r.text(), 'bad'); return; }
       z._thumb = value;
+      // Remember it per-track so the highlight survives the 5s poll while
+      // the same song is playing (cleared automatically when the track changes).
+      thumbedTracks[entity] = { uri: body.track_uri, value };
+      const trackName = body.title || body.artist || 'track';
+      muToast(value === 1 ? `👍 Liked “${trackName}”` : `👎 Skipping “${trackName}”`,
+              value === 1 ? 'good' : 'bad');
       // Refresh sooner if we skipped (down).
       setTimeout(refreshNowPlaying, value === -1 ? 700 : 200);
       // Refresh station fitness badges if this is a station play.
       if (zoneStationMap[entity]) refreshStationFitness(zoneStationMap[entity]);
-    } catch(e) { alert('Thumb error: ' + e); }
+    } catch(e) { muToast('Thumb error: ' + e, 'bad'); }
   };
 
   window.muTransport = async function(entity, action) {
@@ -912,6 +1092,8 @@
   // ─── Stations ───────────────────────────────────────────────────────
   // Cached fitness per station id so chips redraw without re-hitting the API.
   const stationFitness = {};
+  // Station records by id, for play-feedback toasts (needs the name).
+  const stationsById = {};
 
   async function loadStations() {
     const wrap = document.getElementById('muStations');
@@ -919,6 +1101,7 @@
       const r = await fetch('/api/music/stations');
       const j = await r.json();
       const items = j.stations || [];
+      items.forEach(s => { stationsById[s.id] = s; });
       const cards = items.map(s => renderStation(s)).join('');
       wrap.innerHTML = cards + renderNewStationCard();
       // Fire-and-forget fitness fetches; redraw badges as they resolve.
@@ -926,6 +1109,15 @@
     } catch (e) {
       wrap.innerHTML = '<div class="mu-empty" style="grid-column:1/-1">Couldn\'t load stations.</div>';
     }
+  }
+
+  // Keep each station's "Play on <zone>" button in sync with the current
+  // selection (without re-fetching). Skips a card mid-"Starting…".
+  function updateStationPlayLabels() {
+    const lbl = activeLabel();
+    document.querySelectorAll('.mu-station-play').forEach(b => {
+      if (!b.classList.contains('starting')) b.textContent = `▶ Play on ${lbl}`;
+    });
   }
 
   async function refreshStationFitness(id) {
@@ -1009,16 +1201,38 @@
 
   window.muPlayStation = async function(id) {
     const zones = activeEntities();
+    const card = document.querySelector(`.mu-station[data-id="${id}"]`);
+    const btn  = card ? card.querySelector('.mu-station-play') : null;
+    const name = (stationsById[id] || {}).name || 'station';
+
+    if (!zones.length) { muToast('Select a speaker first', 'bad'); return; }
+    // Guard against double-taps while a start is in flight.
+    if (card && card.classList.contains('starting')) return;
+
+    // Immediate visual acknowledgement that the tap landed.
+    if (card) card.classList.add('starting');
+    if (btn)  { btn.classList.add('starting'); btn.textContent = '⏳ Starting…'; }
+    muToast(`Starting ${name} on ${activeLabel()}…`);
+
+    const clearStarting = () => {
+      if (card) card.classList.remove('starting');
+      if (btn)  { btn.classList.remove('starting'); btn.textContent = `▶ Play on ${activeLabel()}`; }
+    };
+
     try {
       const r = await fetch(`/api/music/stations/${id}/play`, {
         method: 'POST', headers: {'Content-Type':'application/json'},
         body: JSON.stringify({zones}),
       });
-      if (!r.ok) { const t = await r.text(); alert('Station start failed: ' + t); return; }
+      if (!r.ok) { const t = await r.text(); muToast('Station start failed: ' + t, 'bad'); clearStarting(); return; }
       // Track which station is playing where, so thumbs can attribute.
       zones.forEach(z => { zoneStationMap[z] = id; });
-      setTimeout(refreshNowPlaying, 1500);
-    } catch(e) { alert('Station start error: ' + e); }
+      setTimeout(() => {
+        refreshNowPlaying();
+        clearStarting();
+        muToast(`▶ Playing ${name} on ${activeLabel()}`, 'good');
+      }, 1500);
+    } catch(e) { muToast('Station start error: ' + e, 'bad'); clearStarting(); }
   };
 
   window.muDeleteStation = async function(id) {

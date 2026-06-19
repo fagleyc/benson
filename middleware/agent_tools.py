@@ -382,9 +382,15 @@ async def stop_music(room: str, action: str = "pause") -> dict:
 
 @_register(
     "thumbs_song",
-    "Thumbs-up (1) or thumbs-down (-1) the currently playing track. "
-    "Thumbs-down also skips. Zone optional; defaults to whichever zone "
-    "is currently playing.",
+    "Thumbs-up (+1), thumbs-down (-1), or clear (0) a track or an "
+    "artist on the active station. Default behaviour thumbs whatever's "
+    "playing now on the resolved zone; thumbs-down also skips. Pass "
+    "`artist` to thumb an artist that isn't currently playing — that "
+    "becomes a station-level signal (artist-level upvote weights 3x in "
+    "the queue builder; artist-level downvote hard-blocks the artist on "
+    "that station). Active station_id auto-resolves from the most "
+    "recently played station within the last 6 hours; pass `station_id` "
+    "explicitly to override.",
     {
         "type": "object",
         "properties": {
@@ -400,16 +406,82 @@ async def stop_music(room: str, action: str = "pause") -> dict:
                     "whichever zone is currently playing."
                 ),
             },
+            "artist": {
+                "type": "string",
+                "description": (
+                    "Optional artist name for an artist-level thumb "
+                    "(not tied to whatever's currently playing). When "
+                    "provided, no track skip happens; the row is "
+                    "recorded with title='*' so the station queue "
+                    "builder picks it up as a station-level signal."
+                ),
+            },
+            "station_id": {
+                "type": ["integer", "string"],
+                "description": (
+                    "Optional station id to attach the thumb to. If "
+                    "omitted, resolves to the most recently played "
+                    "station within the last 6 hours."
+                ),
+            },
         },
         "required": ["thumb"],
     },
 )
-async def thumbs_song(thumb: int, zone: str | None = None) -> dict:
+async def thumbs_song(
+    thumb: int,
+    zone: str | None = None,
+    artist: str | None = None,
+    station_id: int | str | None = None,
+) -> dict:
     # Import lazily to dodge the music_handler ↔ agent_tools cycle at
     # module-import time. Both modules already live in the same package
     # at runtime so this is free after the first call.
-    from music_handler import _ZONES, thumbs_record
+    from music_handler import _ZONES, _active_station_id, thumbs_record
 
+    # Normalise station_id if the caller passed it as a string.
+    sid: int | None = None
+    if station_id not in (None, ""):
+        try:
+            sid = int(station_id)
+        except (TypeError, ValueError):
+            sid = None
+    if sid is None:
+        try:
+            sid = await asyncio.to_thread(_active_station_id, 6)
+        except Exception as e:
+            logger.warning(f"thumbs_song: active station lookup failed: {e}")
+            sid = None
+
+    # ── Artist-level thumb path ────────────────────────────────────────
+    # Caller passed `artist` explicitly — we are NOT thumbing a track,
+    # we are thumbing an artist as a station-level signal. Skip the
+    # zone/state dance entirely, write directly with title='*' so the
+    # queue builder's wildcard handlers pick it up. Don't skip a track
+    # either — the user didn't say anything was bad with what's playing
+    # right now.
+    if artist:
+        artist_clean = artist.strip()
+        if not artist_clean:
+            return {"ok": False, "error": "artist is empty"}
+        result = await thumbs_record(
+            thumb=int(thumb),
+            zone=None,
+            title="*",
+            artist=artist_clean,
+            album=None,
+            content_id=None,
+            station_id=sid,
+            source="voice",
+        )
+        return {
+            **result,
+            "artist_level": True,
+            "artist": artist_clean,
+            "station_id": sid,
+        }
+
+    # ── Track-level thumb path (legacy / default) ──────────────────────
     resolved_room: str | None = None
     entity: str | None = None
 
@@ -449,12 +521,12 @@ async def thumbs_song(thumb: int, zone: str | None = None) -> dict:
         resolved_room = "kitchen"
         entity = _ZONES["kitchen"]["entity"]
 
-    title = artist = album = content_id = None
+    title = artist_meta = album = content_id = None
     try:
         s = await ha_get_state(entity)
         a = (s or {}).get("attributes", {}) or {}
         title = a.get("media_title")
-        artist = a.get("media_artist")
+        artist_meta = a.get("media_artist")
         album = a.get("media_album_name")
         content_id = a.get("media_content_id")
     except Exception as e:
@@ -464,12 +536,18 @@ async def thumbs_song(thumb: int, zone: str | None = None) -> dict:
         thumb=int(thumb),
         zone=entity,
         title=title,
-        artist=artist,
+        artist=artist_meta,
         album=album,
         content_id=content_id,
+        station_id=sid,
         source="voice",
     )
-    return {**result, "resolved_zone": entity, "resolved_room": resolved_room}
+    return {
+        **result,
+        "resolved_zone": entity,
+        "resolved_room": resolved_room,
+        "station_id": sid,
+    }
 
 
 @_register(

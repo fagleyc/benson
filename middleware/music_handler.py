@@ -34,6 +34,8 @@ Music Assistant capability notes:
 from __future__ import annotations
 
 import asyncio
+import heapq
+import itertools
 import json
 import logging
 import random
@@ -46,7 +48,7 @@ from fastapi import APIRouter, HTTPException, Request
 from psycopg2.extras import Json, RealDictCursor
 
 from config import PG_DSN
-from ha_client import call_service as ha_call, get_state as ha_get_state
+from ha_client import call_service as ha_call, get_state as ha_get_state, HAUnavailable
 
 logger = logging.getLogger("benson.music_handler")
 
@@ -563,8 +565,74 @@ async def transport_endpoint(request: Request) -> dict:
         return {"ok": True, "entity_id": entity, "action": "toggle"}
     if action not in svc_map:
         raise HTTPException(400, f"unknown action: {action}")
-    await ha_call("media_player", svc_map[action], {"entity_id": entity})
+    try:
+        await ha_call("media_player", svc_map[action], {"entity_id": entity})
+    except HAUnavailable as e:
+        # Symptom Casey reported 2026-06-19: music spontaneously stops, then
+        # play/skip buttons "don't work". Root cause is that Music Assistant
+        # returns HTTP 500 ("Server got itself in trouble") on media_play /
+        # media_next_track when its queue has drained and the player went
+        # idle — there's nothing to resume or skip to. Recover by replaying
+        # the most-recently-played station on this entity instead of
+        # surfacing a 500 to the UI.
+        if action in ("play", "skip", "next"):
+            recovered = await _recover_idle_zone(entity)
+            if recovered is not None:
+                return {"ok": True, "entity_id": entity, "action": action,
+                        "recovered": True, "station_id": recovered}
+        raise HTTPException(502, f"transport {action} failed: {e}")
     return {"ok": True, "entity_id": entity, "action": action}
+
+
+async def _recover_idle_zone(entity: str) -> int | None:
+    """Restart the most recently played station on `entity` after MA goes
+    idle with an empty queue. Returns the station id we kicked, or None if
+    the entity is still playing something or no stations exist.
+
+    Uses radio_mode=True so MA keeps generating similar tracks indefinitely
+    — this is the durable fix for the "music just stops" symptom: even if
+    the auto-recovery wasn't triggered, the next station start now tails
+    a radio so the queue never empties cleanly."""
+    try:
+        state = await ha_get_state(entity)
+    except Exception:
+        state = {}
+    s = (state.get("state") or "").lower() if isinstance(state, dict) else ""
+    if s in ("playing", "buffering"):
+        # Not actually idle — original failure was something else, don't
+        # silently restart playback.
+        return None
+    rows = await asyncio.to_thread(
+        _stations_query,
+        "SELECT id, seeds FROM music_stations "
+        "ORDER BY last_played_at DESC NULLS LAST, play_count DESC LIMIT 1",
+    )
+    if not rows:
+        return None
+    station_id = rows[0]["id"]
+    seeds = rows[0].get("seeds") or {}
+    if isinstance(seeds, str):
+        try:
+            seeds = json.loads(seeds)
+        except Exception:
+            seeds = {}
+    resolved = await _resolve_station_seed(seeds)
+    if not resolved:
+        return None
+    media_id, media_type = resolved
+    try:
+        await ha_call(
+            "music_assistant", "play_media",
+            {"entity_id": entity, "media_id": media_id,
+             "media_type": media_type, "enqueue": "replace",
+             "radio_mode": True},
+            timeout_s=30,
+        )
+    except Exception as e:
+        logger.warning(f"idle recovery for {entity} failed: {e}")
+        return None
+    logger.info(f"idle recovery: restarted station {station_id} on {entity}")
+    return station_id
 
 
 # ─── Stations (CRUD + play) ─────────────────────────────────────────────
@@ -758,25 +826,146 @@ def _station_blocklist_rows(station_id: int) -> list[dict]:
         return [dict(r) for r in cur.fetchall()]
 
 
-def _station_positive_artists(station_id: int) -> list[str]:
-    """Artists with at least one +1 thumb in this station, most-thumbed first."""
+def _station_positive_artists(station_id: int) -> list[tuple[str, int]]:
+    """Artists with at least one +1 thumb in this station, with their thumb
+    counts. Returned in (artist, count) form, most-thumbed first, so the
+    queue builder can weight the round-robin pool by enthusiasm: an artist
+    with 5 +1s gets 5x more slots per cycle than an artist with 1.
+
+    Artist-level upvotes (title='*' sentinel inserted by `thumbs_song`
+    when the user thumbs an artist that isn't currently playing) count
+    as 3 song-level votes — a deliberate "play more of this" signal
+    deserves more weight than a single track happening to land well."""
     with psycopg2.connect(**PG_DSN) as conn, conn.cursor() as cur:
         cur.execute(
-            "SELECT artist, count(*) AS c FROM music_thumbs "
-            "WHERE station_id = %s AND thumb = 1 AND artist IS NOT NULL AND artist <> '' "
+            "SELECT artist, "
+            "       sum(CASE WHEN title = '*' THEN 3 ELSE 1 END)::int AS c "
+            "FROM music_thumbs "
+            "WHERE station_id = %s AND thumb = 1 "
+            "  AND artist IS NOT NULL AND artist <> '' "
             "GROUP BY artist ORDER BY c DESC LIMIT 20",
             (station_id,),
         )
-        return [r[0] for r in cur.fetchall()]
+        return [(r[0], int(r[1])) for r in cur.fetchall()]
+
+
+def _global_blocked_artists() -> set[str]:
+    """Cross-station artist blocklist: artists with 3+ thumb-downs across
+    ALL stations in the last 30d, OR any single artist-level (title='*')
+    thumb-down anywhere. Used in addition to the per-station blocklist so
+    a strong negative signal — Casey down-thumbing Florence on three
+    different stations — actually translates into "stop trying her on
+    new stations too." Seed artists for the current station override
+    this (an explicit `seed_artists` entry signals deliberate intent)."""
+    with psycopg2.connect(**PG_DSN) as conn, conn.cursor() as cur:
+        cur.execute(
+            "SELECT artist FROM music_thumbs "
+            "WHERE thumb = -1 "
+            "  AND artist IS NOT NULL AND artist <> '' "
+            "  AND created_at >= now() - interval '30 days' "
+            "GROUP BY artist "
+            "HAVING count(*) >= 3 OR bool_or(title = '*')"
+        )
+        return {(r[0] or "").strip().lower() for r in cur.fetchall() if r[0]}
+
+
+def _global_positive_artists(exclude_station_id: int | None = None) -> list[tuple[str, int]]:
+    """Cross-station positive signal: artists with thumb-ups on any other
+    station, returned in (artist, weight) form. Weight is the count of
+    +1 votes (artist-level rows worth 3 each) divided by 2 — global
+    positives should nudge a new station toward known favorites without
+    swamping the station's own seed_artists.
+
+    `exclude_station_id` skips the current station so its rows are only
+    counted once by `_station_positive_artists`."""
+    with psycopg2.connect(**PG_DSN) as conn, conn.cursor() as cur:
+        if exclude_station_id is not None:
+            cur.execute(
+                "SELECT artist, "
+                "       sum(CASE WHEN title = '*' THEN 3 ELSE 1 END)::int AS c "
+                "FROM music_thumbs "
+                "WHERE thumb = 1 "
+                "  AND artist IS NOT NULL AND artist <> '' "
+                "  AND (station_id IS NULL OR station_id <> %s) "
+                "GROUP BY artist "
+                "HAVING sum(CASE WHEN title = '*' THEN 3 ELSE 1 END) >= 2 "
+                "ORDER BY c DESC LIMIT 20",
+                (exclude_station_id,),
+            )
+        else:
+            cur.execute(
+                "SELECT artist, "
+                "       sum(CASE WHEN title = '*' THEN 3 ELSE 1 END)::int AS c "
+                "FROM music_thumbs "
+                "WHERE thumb = 1 "
+                "  AND artist IS NOT NULL AND artist <> '' "
+                "GROUP BY artist "
+                "HAVING sum(CASE WHEN title = '*' THEN 3 ELSE 1 END) >= 2 "
+                "ORDER BY c DESC LIMIT 20"
+            )
+        return [(r[0], max(1, int(r[1]) // 2)) for r in cur.fetchall()]
+
+
+def _station_blocked_artists(station_id: int) -> set[str]:
+    """Artists with 3+ track-level thumb-downs in the last 30 days OR a
+    single artist-level thumb-down (title='*' sentinel from `thumbs_song`)
+    in the same window. Their tracks are dropped from the queue pool
+    entirely — not just the specific URIs that were down-thumbed.
+
+    The wildcard branch is the explicit-block path: when Casey says
+    'thumbs down Florence and the Machine on this station' he means
+    'never play Florence on this station', not 'log one negative vote
+    against Florence'. One artist-level row is enough."""
+    with psycopg2.connect(**PG_DSN) as conn, conn.cursor() as cur:
+        cur.execute(
+            "SELECT artist FROM music_thumbs "
+            "WHERE station_id = %s AND thumb = -1 "
+            "  AND artist IS NOT NULL AND artist <> '' "
+            "  AND created_at >= now() - interval '30 days' "
+            "GROUP BY artist "
+            "HAVING count(*) >= 3 OR bool_or(title = '*')",
+            (station_id,),
+        )
+        return {(r[0] or "").strip().lower() for r in cur.fetchall() if r[0]}
+
+
+def _active_station_id(within_hours: int = 6) -> int | None:
+    """Return the most-recently-played station id, if it was played
+    within the last `within_hours` hours. Used by `thumbs_song` so a
+    voice/Signal thumb attaches to whichever station is actually
+    running — there's no per-zone "active station" pointer because the
+    same zone can play arbitrary media outside the station system."""
+    with psycopg2.connect(**PG_DSN) as conn, conn.cursor() as cur:
+        cur.execute(
+            "SELECT id FROM music_stations "
+            "WHERE last_played_at IS NOT NULL "
+            "  AND last_played_at >= now() - (%s || ' hours')::interval "
+            "ORDER BY last_played_at DESC LIMIT 1",
+            (str(int(within_hours)),),
+        )
+        row = cur.fetchone()
+        return int(row[0]) if row else None
 
 
 async def _build_queue_for_station(
-    station_id: int, seeds: dict, blocklist: list[dict], positives: list[str],
+    station_id: int, seeds: dict, blocklist: list[dict],
+    positives: list[tuple[str, int]],
     target_count: int = 30,
 ) -> list[tuple[str, str]]:
     """Pre-build a list of (uri, media_type) entries from positive-thumb
-    artists + seed artists. Filters out tracks whose (artist, title)
-    matches a blocklist entry. Returns at most target_count items.
+    artists + seed artists, interleaved so the queue does NOT stack
+    consecutive tracks from the same artist.
+
+    Two-stage build:
+      1. Fetch candidate tracks per artist into per-artist buckets,
+         honoring the track-level blocklist and the artist-level decay
+         set (3+ thumb-downs in 30 days → artist dropped entirely).
+      2. Weighted round-robin interleave across the buckets using a
+         min-heap. Each artist's priority advances by 1/weight every
+         time we pop them, so an artist with 5 thumbs gets ~5x as many
+         slots as an artist with 1 thumb — and the slots are spread
+         across the queue instead of clustered. We also avoid
+         scheduling the same artist back-to-back.
 
     Returns empty list when no positives exist OR no tracks can be
     resolved — caller falls through to the existing radio_mode seed path.
@@ -784,15 +973,53 @@ async def _build_queue_for_station(
     cfg_id = await _ma_entry_id()
     if not cfg_id:
         return []
-    # Source artist pool: positives first (preferred), then seed_artists.
-    seed_artists = [a for a in (seeds.get("seed_artists") or []) if a]
-    artist_pool = list(dict.fromkeys(positives + seed_artists))
     if not positives:
         # Per spec: if no positive thumbs yet, fall through to radio_mode.
         return []
-    if not artist_pool:
+
+    seed_artists = [a for a in (seeds.get("seed_artists") or []) if a]
+    seed_artist_keys = {a.strip().lower() for a in seed_artists if a}
+
+    # Build weighted pool: positives carry their thumb count; seed_artists
+    # contribute weight 1 if not already present from positives. Then
+    # cross-station favorites (weight halved upstream) join the pool so
+    # known favorites get a chance on new stations — but they never beat
+    # explicit per-station positives.
+    artist_weights: dict[str, int] = {}
+    for artist, count in positives:
+        if artist:
+            artist_weights[artist] = max(1, int(count))
+    for artist in seed_artists:
+        if artist and artist not in artist_weights:
+            artist_weights[artist] = 1
+    global_positives = await asyncio.to_thread(
+        _global_positive_artists, station_id
+    )
+    for artist, gweight in global_positives:
+        if artist and artist not in artist_weights:
+            artist_weights[artist] = max(1, int(gweight))
+    if not artist_weights:
         return []
-    # Build (artist_lower, title_lower) set for fast block lookup.
+
+    # Artist-level decay: drop artists with 3+ thumb-downs in the last 30
+    # days. This is the missing piece — track-level blocking alone never
+    # convinced the station to stop trying more songs by an artist Casey
+    # clearly didn't want. We also overlay a cross-station blocklist so a
+    # strong global negative carries over to new stations, EXCEPT for
+    # artists this station has explicitly seeded — those signal user
+    # intent and shouldn't be silently filtered.
+    blocked_artists = await asyncio.to_thread(_station_blocked_artists, station_id)
+    global_blocked = await asyncio.to_thread(_global_blocked_artists)
+    blocked_artists = blocked_artists | (global_blocked - seed_artist_keys)
+    if blocked_artists:
+        artist_weights = {
+            a: w for a, w in artist_weights.items()
+            if a.strip().lower() not in blocked_artists
+        }
+    if not artist_weights:
+        return []
+
+    # Track-level blocklist (exact URI or exact (artist, title) pair).
     blocked_pairs: set[tuple[str, str]] = set()
     blocked_uris: set[str] = set()
     for b in blocklist:
@@ -803,39 +1030,85 @@ async def _build_queue_for_station(
         if a and t:
             blocked_pairs.add((a, t))
 
-    out: list[tuple[str, str]] = []
-    random.shuffle(artist_pool)
-    for artist in artist_pool:
-        if len(out) >= target_count:
-            break
+    # ── Stage 1: per-artist candidate buckets ──────────────────────────
+    # Limit bumped from 8 → 15 so heavy-weighted artists have enough
+    # depth to feed multiple round-robin cycles without immediately
+    # falling back to their lower-quality tail.
+    artists = list(artist_weights.keys())
+    random.shuffle(artists)
+    per_artist: dict[str, list[tuple[str, str]]] = {}
+    seen_uris: set[str] = set()
+    for artist in artists:
         try:
             r = await ha_call(
                 "music_assistant", "search",
                 {"config_entry_id": cfg_id, "name": artist,
-                 "media_type": ["track"], "limit": 8, "library_only": False},
+                 "media_type": ["track"], "limit": 15, "library_only": False},
                 timeout_s=15, return_response=True,
             )
         except Exception as e:
             logger.debug(f"queue build search failed for {artist}: {e}")
             continue
         sr = (r or {}).get("service_response") or {}
+        bucket: list[tuple[str, str]] = []
         for t in (sr.get("tracks") or []):
             if not isinstance(t, dict):
                 continue
             uri = t.get("uri")
-            if not uri or uri in blocked_uris:
+            if not uri or uri in blocked_uris or uri in seen_uris:
                 continue
             title = (t.get("name") or t.get("title") or "").strip().lower()
             tartists = t.get("artists") or []
             tartist_names = [
-                (a.get("name") if isinstance(a, dict) else str(a)).strip().lower()
-                for a in tartists
+                (ta.get("name") if isinstance(ta, dict) else str(ta)).strip().lower()
+                for ta in tartists
             ]
             if any((an, title) in blocked_pairs for an in tartist_names):
                 continue
-            out.append((uri, "track"))
-            if len(out) >= target_count:
-                break
+            # Skip tracks whose any credited artist sits in the decay set.
+            if any(an in blocked_artists for an in tartist_names):
+                continue
+            bucket.append((uri, "track"))
+            seen_uris.add(uri)
+        if bucket:
+            random.shuffle(bucket)
+            per_artist[artist] = bucket
+
+    if not per_artist:
+        return []
+
+    # ── Stage 2: weighted round-robin interleave ───────────────────────
+    # Min-heap on (priority, tie_breaker, artist). Lower priority = picked
+    # sooner. Each artist starts at priority 1/weight so heavier artists
+    # surface earlier; each pop bumps the artist's priority by 1/weight.
+    # Net effect: across a queue of N slots, artist with weight w gets
+    # roughly w*N/sum(weights) slots, evenly distributed.
+    tiebreak = itertools.count()
+    heap: list[tuple[float, int, str]] = []
+    for artist, weight in artist_weights.items():
+        if per_artist.get(artist):
+            heapq.heappush(heap, (1.0 / weight, next(tiebreak), artist))
+
+    out: list[tuple[str, str]] = []
+    last_artist: str | None = None
+    while heap and len(out) < target_count:
+        priority, tb, artist = heapq.heappop(heap)
+        # Avoid back-to-back same artist when an alternative exists.
+        if artist == last_artist and heap:
+            priority2, tb2, artist2 = heapq.heappop(heap)
+            heapq.heappush(heap, (priority, tb, artist))
+            priority, tb, artist = priority2, tb2, artist2
+        bucket = per_artist.get(artist) or []
+        if not bucket:
+            continue
+        out.append(bucket.pop(0))
+        last_artist = artist
+        if bucket:
+            weight = artist_weights[artist]
+            heapq.heappush(
+                heap, (priority + 1.0 / weight, next(tiebreak), artist)
+            )
+
     return out
 
 
@@ -1127,6 +1400,121 @@ async def station_fitness(station_id: int) -> dict:
             "total": len(rows),
             "last_n_pct_up": pct_up,
             "top_blocked": top_blocked,
+        }
+
+    return await asyncio.to_thread(_q)
+
+
+@router.post("/api/music/thumbs/clear")
+async def thumbs_clear(request: Request) -> dict:
+    """Remove thumb rows so an old downvote stops blocking an artist.
+
+    Body shape (one of):
+        {artist: "Florence + the Machine"} — clear all rows for artist
+                                              (all stations)
+        {artist: "...", station_id: 7}    — clear for one station
+        {id: 123}                          — clear a single thumb row
+        {media_uri: "..."}                 — clear by exact track uri
+
+    Returns {ok, removed: <count>}. Used by UI 'undo' affordance and by
+    voice ("forget my Florence downvote") so curation stays editable
+    instead of permanent."""
+    body = await request.json()
+    if not isinstance(body, dict):
+        raise HTTPException(400, "json body required")
+
+    artist = (body.get("artist") or "").strip()
+    media_uri = (body.get("media_uri") or body.get("track_uri") or "").strip()
+    row_id = body.get("id")
+    station_id = body.get("station_id")
+    if station_id in ("", None):
+        station_id = None
+    else:
+        try:
+            station_id = int(station_id)
+        except (TypeError, ValueError):
+            raise HTTPException(400, "station_id must be int")
+
+    if not (artist or media_uri or row_id):
+        raise HTTPException(400, "artist, media_uri, or id required")
+
+    def _delete() -> int:
+        with psycopg2.connect(**PG_DSN) as conn, conn.cursor() as cur:
+            if row_id is not None:
+                cur.execute(
+                    "DELETE FROM music_thumbs WHERE id = %s",
+                    (int(row_id),),
+                )
+            elif media_uri:
+                if station_id is not None:
+                    cur.execute(
+                        "DELETE FROM music_thumbs "
+                        "WHERE media_uri = %s AND station_id = %s",
+                        (media_uri, station_id),
+                    )
+                else:
+                    cur.execute(
+                        "DELETE FROM music_thumbs WHERE media_uri = %s",
+                        (media_uri,),
+                    )
+            else:
+                # artist-only clear: case-insensitive match
+                if station_id is not None:
+                    cur.execute(
+                        "DELETE FROM music_thumbs "
+                        "WHERE lower(artist) = lower(%s) AND station_id = %s",
+                        (artist, station_id),
+                    )
+                else:
+                    cur.execute(
+                        "DELETE FROM music_thumbs WHERE lower(artist) = lower(%s)",
+                        (artist,),
+                    )
+            removed = cur.rowcount
+            conn.commit()
+            return removed
+
+    try:
+        removed = await asyncio.to_thread(_delete)
+    except Exception as e:
+        raise HTTPException(500, f"thumb clear failed: {e}")
+    return {"ok": True, "removed": int(removed)}
+
+
+@router.get("/api/music/thumbs/admin")
+async def thumbs_admin() -> dict:
+    """Global thumbs snapshot: top liked + blocked artists across every
+    station. Read-only inspection — paired with /clear for hand-tuning."""
+    def _q() -> dict:
+        with psycopg2.connect(**PG_DSN) as conn, conn.cursor(
+            cursor_factory=RealDictCursor
+        ) as cur:
+            cur.execute(
+                "SELECT artist, "
+                "       sum(CASE WHEN title = '*' THEN 3 ELSE 1 END)::int AS c "
+                "FROM music_thumbs "
+                "WHERE thumb = 1 AND artist IS NOT NULL AND artist <> '' "
+                "GROUP BY artist ORDER BY c DESC LIMIT 25"
+            )
+            top_liked = [dict(r) for r in cur.fetchall()]
+            cur.execute(
+                "SELECT artist, count(*)::int AS c FROM music_thumbs "
+                "WHERE thumb = -1 AND artist IS NOT NULL AND artist <> '' "
+                "  AND created_at >= now() - interval '30 days' "
+                "GROUP BY artist ORDER BY c DESC LIMIT 25"
+            )
+            top_blocked = [dict(r) for r in cur.fetchall()]
+            cur.execute(
+                "SELECT count(*) FILTER (WHERE thumb=1) AS ups, "
+                "       count(*) FILTER (WHERE thumb=-1) AS downs, "
+                "       count(DISTINCT station_id) AS stations_touched "
+                "FROM music_thumbs"
+            )
+            totals = dict(cur.fetchone())
+        return {
+            "top_liked_artists": top_liked,
+            "top_blocked_artists_30d": top_blocked,
+            "totals": totals,
         }
 
     return await asyncio.to_thread(_q)
