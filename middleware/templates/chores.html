@@ -271,9 +271,10 @@
     try { localStorage.setItem(KEY, m); } catch (e) {}
   }
   buttons.forEach(b => b.addEventListener('click', () => apply(b.dataset.view)));
-  let saved = 'daily';
-  try { saved = localStorage.getItem(KEY) || 'daily'; } catch (e) {}
-  apply(saved);
+  // Casey 2026-06-24: Daily is ALWAYS the default on page load — don't
+  // honor stale localStorage from a one-off "show me weekly" tap. The
+  // toggle still works mid-session; next reload returns to Daily.
+  apply('daily');
 })();
 
 // ── weekly tally banner ────────────────────────────────────────────
