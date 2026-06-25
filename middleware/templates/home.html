@@ -270,7 +270,23 @@ async function loadToday() {
     }
 
     const cw = document.getElementById('choresWidget');
-    const chores = j.chores || [];
+    const allChores = j.chores || [];
+    // Casey 2026-06-24: don't render empty-person cards on the home hub —
+    // people with chores should fill the screen, not be pushed off by
+    // "All clear" placeholders for the other half of the household.
+    const chores = allChores.filter(c => {
+      const items = Array.isArray(c.items) ? c.items : [];
+      return items.length > 0 || (c.open || 0) > 0 || (c.done_count || 0) > 0;
+    });
+    // When fewer than 3 people have chores, widen each card so the
+    // people with chores actually fill the row.
+    const colCls = chores.length === 1 ? 'col-12'
+                 : chores.length === 2 ? 'col-12 col-md-6'
+                                       : 'col-12 col-md-4';
+    // With wider cards we have room to show more items before truncating.
+    const maxItems = chores.length === 1 ? 12
+                   : chores.length === 2 ? 8
+                                         : 4;
     const esc = s => String(s == null ? '' : s)
       .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
       .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
@@ -280,7 +296,7 @@ async function loadToday() {
         const pct = total ? Math.round(100 * (c.done_count || 0) / total) : 0;
         const tag = (c.person === 'Cole' || c.person === 'Zander') ? 'bg-info' : 'bg-secondary';
         const items = Array.isArray(c.items) ? c.items : [];
-        const shown = items.slice(0, 4);
+        const shown = items.slice(0, maxItems);
         const remainder = items.length - shown.length;
         let listHtml;
         if (items.length === 0) {
@@ -300,7 +316,7 @@ async function loadToday() {
           listHtml = `<ul class="list-unstyled small mt-2 mb-0" style="line-height:1.6;">${lis}${tail}</ul>`;
         }
         const href = '/chores?person=' + encodeURIComponent(c.person);
-        return `<div class="col-12 col-md-4">
+        return `<div class="${colCls}">
           <a href="${href}" class="d-block text-decoration-none text-reset">
             <div class="p-3 home-card" style="background:#1a2128;border:1px solid #2d3a47;border-radius:10px;">
               <div class="d-flex justify-content-between mb-2">
